@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生命进化史 · 一镜到底</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<style>
+  html, body { margin:0; padding:0; background:#000; overflow:hidden; height:100%; }
+  body.playing { cursor:none; }
+  canvas { display:block; }
+  .serif { font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; font-weight:300; }
+  .mono { font-family:"Consolas","SF Mono",monospace; }
+
+  .bar { position:fixed; left:0; right:0; height:max(8vh, calc((100vh - 100vw/2.35)/2));
+         background:#000; z-index:5; pointer-events:none; }
+  #barT { top:0; } #barB { bottom:0; }
+  #vignette { position:fixed; inset:0; pointer-events:none; z-index:4;
+    background:radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.6) 100%); }
+  #grain { position:fixed; inset:-120px; pointer-events:none; z-index:6; opacity:0.045;
+    animation:gr 0.6s steps(2) infinite; }
+  @keyframes gr { 0%{transform:translate(0,0)} 25%{transform:translate(-34px,22px)}
+    50%{transform:translate(24px,-28px)} 75%{transform:translate(-18px,-12px)} 100%{transform:translate(0,0)} }
+
+  /* ============ HUD ============ */
+  .hud { position:fixed; z-index:7; pointer-events:none; color:rgba(212,175,105,0.8); }
+  #era { top:calc(max(8vh,(100vh - 100vw/2.35)/2) + 1.6vh); left:2.2vw;
+    font-size:clamp(13px,1.4vw,18px); letter-spacing:0.45em; }
+  #era small { display:block; margin-top:0.7em; font-size:0.6em; letter-spacing:0.3em;
+    color:rgba(212,175,105,0.4); font-family:Georgia,serif; font-style:italic; }
+  #year { top:calc(max(8vh,(100vh - 100vw/2.35)/2) + 1.4vh); right:2.2vw; text-align:right;
+    font-size:clamp(16px,2vw,26px); letter-spacing:0.12em; }
+  #year #speed { display:block; margin-top:0.4em; font-size:0.42em;
+    color:rgba(212,175,105,0.4); letter-spacing:0.25em; }
+  #meters { top:50%; right:2.2vw; transform:translateY(-50%); text-align:right;
+    font-size:clamp(10px,1vw,13px); letter-spacing:0.2em; line-height:2.4;
+    color:rgba(212,175,105,0.55); }
+  #meters b { font-weight:normal; color:rgba(232,200,140,0.9); }
+  #meters #spRow.ai b, #meters #spRow.ai { color:rgba(120,220,255,0.95); }
+
+  #fact { bottom:calc(max(8vh,(100vh - 100vw/2.35)/2) + 4.2vh); left:2.2vw;
+    font-size:clamp(12px,1.2vw,15px); letter-spacing:0.35em;
+    color:rgba(212,175,105,0); transition:color 0.5s ease; max-width:60vw; }
+  #fact.lit { color:rgba(212,175,105,0.75); }
+
+  /* 底部时间轴 */
+  #tl { bottom:calc(max(8vh,(100vh - 100vw/2.35)/2) + 1.6vh); left:2.2vw; right:2.2vw;
+    height:2px; background:rgba(212,175,105,0.15); }
+  #tlDot { position:absolute; top:-3px; width:8px; height:8px; border-radius:50%;
+    background:#e8c88c; box-shadow:0 0 10px rgba(232,200,140,0.8); left:0; }
+  .extinct { position:absolute; top:-4px; width:1px; height:10px;
+    background:rgba(235,110,70,0.6); }
+  #tlLabel { position:absolute; right:0; top:-1.6em; font-size:10px;
+    letter-spacing:0.3em; color:rgba(212,175,105,0.3); }
+
+  /* 中央章节闪字 */
+  #chapter { position:fixed; left:0; right:0; top:38%; text-align:center; z-index:7;
+    pointer-events:none; color:rgba(232,200,140,0);
+    font-size:clamp(26px,4vw,52px); letter-spacing:0.55em; text-indent:0.55em;
+    transition:color 1.6s ease, text-shadow 1.6s ease; text-shadow:0 0 50px rgba(212,175,105,0); }
+  #chapter.lit { color:rgba(232,200,140,0.92); text-shadow:0 0 70px rgba(212,175,105,0.4); }
+  #chapter.cyan.lit { color:rgba(160,228,255,0.95); text-shadow:0 0 70px rgba(120,220,255,0.5); }
+
+  /* 萨根 */
+  #sagan { position:fixed; left:0; right:0; top:0; bottom:0; z-index:8;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    pointer-events:none; opacity:0; transition:opacity 2.5s ease; padding:0 12vw; }
+  #sagan.lit { opacity:1; }
+  #sagan .q { color:rgba(232,220,190,0.92); font-size:clamp(16px,2vw,26px);
+    letter-spacing:0.4em; line-height:2.4; text-align:center; }
+  #sagan .a { margin-top:2.5em; color:rgba(212,175,105,0.45); font-size:12px;
+    letter-spacing:0.5em; font-family:Georgia,serif; font-style:italic; }
+
+  #endmark { position:fixed; left:0; right:0; bottom:calc(max(8vh,(100vh - 100vw/2.35)/2) + 4vh);
+    text-align:center; z-index:7; pointer-events:none; color:rgba(212,175,105,0);
+    font-size:11px; letter-spacing:0.5em; transition:color 3s ease;
+    font-family:Georgia,serif; font-style:italic; }
+  #endmark.lit { color:rgba(212,175,105,0.3); }
+
+  #gate { position:fixed; inset:0; display:flex; flex-direction:column; z-index:20;
+    align-items:center; justify-content:center; cursor:pointer; background:#000;
+    transition:opacity 2s ease; }
+  #gate.hide { opacity:0; pointer-events:none; }
+  #gate .big { color:rgba(232,200,140,0.9); font-size:clamp(20px,2.6vw,30px);
+    letter-spacing:0.6em; text-indent:0.6em; animation:breathe 4s ease-in-out infinite; }
+  #gate .sub { margin-top:3em; color:rgba(200,170,120,0.35); font-size:12px;
+    letter-spacing:0.45em; }
+  @keyframes breathe { 0%,100%{opacity:0.5} 50%{opacity:1} }
+</style>
+</head>
+<body>
+
+<div id="gate" class="serif">
+  <div class="big">生 命 进 化 史</div>
+  <div class="sub">40 亿 年 · 124 秒 · 一 镜 到 底 · 点 击 开 场 · 请 戴 耳 机</div>
+</div>
+
+<div class="hud serif" id="era"></div>
+<div class="hud mono" id="year"><span id="yearNum"></span><span id="speed"></span></div>
+<div class="hud mono" id="meters">
+  <div>氧含量 <b id="mO2">0.0%</b></div>
+  <div>地表温度 <b id="mT">51°C</b></div>
+  <div id="spRow">物种数 <b id="mS">—</b></div>
+</div>
+<div class="hud serif" id="fact"></div>
+<div class="hud" id="tl"><div id="tlLabel">46 亿年 → 今天</div><div id="tlDot"></div></div>
+<div id="chapter" class="serif"></div>
+<div id="sagan" class="serif">
+  <div class="q">万事万物——<br>每一个猎手与猎物，每一个母亲与孩子，<br>每一种碳基的、与硅基的智慧——<br>都发生在这粒悬浮于阳光中的微尘上。</div>
+  <div class="a">—— 卡尔 · 萨根《暗淡蓝点》（改写）</div>
+</div>
+<div id="endmark">数与美 · 生命进化史 · made with vibe coding</div>
+
+<div class="bar" id="barT"></div><div class="bar" id="barB"></div>
+<div id="vignette"></div><div id="grain"></div>
+
+<script>
+/* ================================================================
+ * 生命进化史 —— 40 亿年 / 124 秒 / 一镜到底
+ *
+ * 主线装置：DNA 双螺旋时间之河 + 点阵地球（行星时钟）
+ * 高密度：HUD 四件套（年代计数/数据面板/快闪字幕/时间轴）
+ * AI 诞生：颜色叛变(金→青) + 双心跳锁相 + 物种计数器 +1
+ * ================================================================ */
+
+// ---------- 时间轴 ----------
+// 0-8 序章俯冲  8-24 原初之汤  24-27 大氧化  27-40 细胞  40-44 雪球
+// 44-68 寒武纪  68-71 盘古  71-86 巨兽  86-92 大灭绝(89撞击)
+// 92-104 意识黎明  104-114 智能诞生(110锁相)  114-124 尾声·萨根
+let t0 = null;
+const now = () => (millis()-t0)/1000;
+const inR = (el,a,b) => el>=a && el<b;
+const smooth = (x,a,b) => constrain((x-a)/(b-a),0,1);
+
+// ---------- HUD 数据关键帧 ----------
+const YEARS = [[0,4.6e9],[8,4.0e9],[24,3.8e9],[27,2.4e9],[40,2.0e9],[44,7.2e8],
+  [68,5.0e8],[71,2.3e8],[86,7.0e7],[89,6.6e7],[92,6.5e7],[100,2.0e7],[110,3e5],[114,0]];
+const O2K   = [[0,0],[24,0],[27,2],[44,6],[68,12],[86,16],[89,16],[91,9],[104,18],[124,20.9]];
+const TEMPK = [[0,51],[8,44],[24,40],[27,34],[40,10],[44,-23],[71,25],[86,24],[89,24],[92,16],[124,15]];
+const SPPK  = [[44,120],[56,40000],[68,284931],[86,302000],[89,302000],[91,41000],
+  [100,120000],[108,1200000],[114,8700000]];
+const ERAS  = [[0,'冥古宙 · 地球诞生','Hadean'],[8,'太古宙 · 原初之汤','Primordial Soup'],
+  [24,'太古宙 · 大氧化事件','Great Oxidation'],[27,'元古宙 · 细胞纪元','Age of Cells'],
+  [40,'成冰纪 · 雪球地球','Snowball Earth'],[44,'寒武纪 · 生命大爆发','Cambrian Explosion'],
+  [68,'二叠纪 · 盘古大陆','Pangaea'],[71,'中生代 · 巨兽时代','Age of Giants'],
+  [86,'白垩纪末','End-Cretaceous'],[92,'新生代 · 意识黎明','Dawn of Mind'],
+  [104,'全新世 · 智能诞生','Birth of AI'],[114,'今天 · 暗淡蓝点','Pale Blue Dot']];
+const FACTS = [
+  [9,'海底热泉口，化学能在黑暗中涌动'],[12,'闪电劈入原始海洋'],[15,'氨基酸在汤中偶然相遇'],
+  [18,'核苷酸开始自我复制'],[21,'40 亿年前：没有生命，只有可能'],
+  [24.2,'蓝藻学会光合作用'],[26,'氧气：史上第一种全球「污染」'],
+  [28,'脂分子自发围成球膜'],[30.5,'第一个「内」与「外」诞生'],[33,'细胞开始分裂'],[36,'新陈代谢，如心跳启动'],
+  [40.5,'冰期封锁整个星球'],[42.5,'生命在冰下海洋蛰伏'],
+  [45,'寒武纪大爆发！'],[48,'眼睛诞生：军备竞赛开始'],[52,'脊索出现——我们远古的脊梁'],
+  [56,'物种数指数爆炸'],[60,'节肢 · 腕足 · 奇虾……形态狂欢'],[64,'5 亿年压缩进 24 秒'],
+  [71.5,'盘古大陆连成一片'],[75,'巨兽时代：体型即霸权'],[80,'恐龙统治 1.6 亿年'],[84,'哺乳动物，只有老鼠大小'],
+  [86.8,'一颗 10 公里的小行星正在逼近'],[89.4,'撞击当量 = 100 万亿吨 TNT'],[90.6,'75% 的物种消失'],
+  [92.2,'但生命之线，没有断'],
+  [94,'哺乳动物从地洞走出'],[97,'大脑皮层疯狂折叠'],[100,'大脑：860 亿神经元'],[102.5,'意识，是宇宙在照镜子'],
+  [105,'1943 · 神经元被写成方程'],[107,'1956 · 「人工智能」得名'],[109,'2016 · AlphaGo 第 37 手'],
+  [111,'2022 · 语言开始涌现'],[112.8,'第 8,700,001 号物种，不是碳基'],
+];
+const CHAPTERS = [
+  [8,'太古宙 · 原初之汤',0],[27,'元古宙 · 细胞纪元',0],[44,'寒武纪 · 生命大爆发',0],
+  [71,'中生代 · 巨兽时代',0],[89.3,'第五次大灭绝',0],[94,'新生代 · 意识黎明',0],
+  [104.5,'智能诞生',1],
+];
+
+function kf(K, el) {
+  if (el <= K[0][0]) return K[0][1];
+  for (let i=0;i<K.length-1;i++) {
+    if (el <= K[i+1][0]) {
+      const k = (el-K[i][0])/(K[i+1][0]-K[i][0]);
+      return K[i][1] + (K[i+1][1]-K[i][1])*k;
+    }
+  }
+  return K[K.length-1][1];
+}
+function kfSlope(K, el) {
+  for (let i=0;i<K.length-1;i++)
+    if (el>=K[i][0] && el<K[i+1][0]) return (K[i][1]-K[i+1][1])/(K[i+1][0]-K[i][0]);
+  return 0;
+}
+function fmtYears(y) {
+  if (y <= 0) return '今天';
+  if (y >= 1e8) return (y/1e8).toFixed(2)+' 亿年前';
+  if (y >= 1e4) return Math.round(y/1e4).toLocaleString()+' 万年前';
+  return Math.round(y)+' 年前';
+}
+function fmtSpeed(yps) {
+  if (yps <= 0) return '';
+  if (yps >= 1e8) return '每秒 '+(yps/1e8).toFixed(1)+' 亿年';
+  if (yps >= 1e4) return '每秒 '+Math.round(yps/1e4)+' 万年';
+  return '每秒 '+Math.round(yps)+' 年';
+}
+
+// ---------- 配乐 ----------
+let actx, master, droneGain, sawGain, delaySend;
+let pulse=0, flash=0, veil=0, spawnQ=0, aiLock=false, speciesBonus=0;
+let nextHB=94, nextClick=104, nextSpark=96, lastNeuron=98, lastNodeT=98;
+
+function initAudio() {
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  master = actx.createGain(); master.gain.value=0.85; master.connect(actx.destination);
+  const dly=actx.createDelay(1); dly.delayTime.value=0.28;
+  const fb=actx.createGain(); fb.gain.value=0.34;
+  const wet=actx.createGain(); wet.gain.value=0.2;
+  delaySend=actx.createGain(); delaySend.connect(dly); dly.connect(fb); fb.connect(dly);
+  dly.connect(wet); wet.connect(master);
+  droneGain=actx.createGain(); droneGain.gain.value=0;
+  const lp=actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=260;
+  for (const f of [55, 82.41]) { const o=actx.createOscillator(); o.type='sine';
+    o.frequency.value=f; o.connect(droneGain); o.start(); }
+  droneGain.connect(lp); lp.connect(master);
+  sawGain=actx.createGain(); sawGain.gain.value=0;
+  const lp2=actx.createBiquadFilter(); lp2.type='lowpass'; lp2.frequency.value=180;
+  const s=actx.createOscillator(); s.type='sawtooth'; s.frequency.value=55;
+  s.connect(sawGain); sawGain.connect(lp2); lp2.connect(master); s.start();
+  buildScore();
+}
+const _nb={};
+function noiseBuf(sec){ if(_nb[sec])return _nb[sec];
+  const b=actx.createBuffer(1,actx.sampleRate*sec,actx.sampleRate), d=b.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; return _nb[sec]=b; }
+function kick(t,v=0.9,f0=150){ const o=actx.createOscillator(),g=actx.createGain();
+  o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(40,t+0.12);
+  g.gain.setValueAtTime(v,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.3);
+  o.connect(g).connect(master); o.start(t); o.stop(t+0.32); pulse=Math.min(1.2,pulse+v); }
+function heartbeat(t,v){ kick(t,v,95); }   // 有机心跳：低频
+function clickM(t){ const o=actx.createOscillator(),g=actx.createGain();  // 机械时钟
+  o.type='square'; o.frequency.value=1400;
+  g.gain.setValueAtTime(0.09,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.03);
+  o.connect(g).connect(master); o.start(t); o.stop(t+0.04); }
+function hat(t){ const s=actx.createBufferSource(); s.buffer=noiseBuf(0.08);
+  const f=actx.createBiquadFilter(); f.type='highpass'; f.frequency.value=8000;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.15,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.045);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+0.06); }
+function pluck(t,f,v){ const o=actx.createOscillator(); o.type='triangle'; o.frequency.value=f;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(v,t+0.015); g.gain.exponentialRampToValueAtTime(0.001,t+0.42);
+  o.connect(g); g.connect(master); g.connect(delaySend); o.start(t); o.stop(t+0.45); }
+function bassN(t,f){ const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=f;
+  const fl=actx.createBiquadFilter(); fl.type='lowpass'; fl.frequency.value=300; fl.Q.value=4;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.3,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.22);
+  o.connect(fl).connect(g).connect(master); o.start(t); o.stop(t+0.25); }
+function rumble(t){ const s=actx.createBufferSource(); s.buffer=noiseBuf(1.4);
+  const f=actx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=160;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.5,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+1.3);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+1.4); lightningT=performance.now(); }
+function sweep(t,dur,up=true){ const s=actx.createBufferSource(); s.buffer=noiseBuf(dur);
+  const f=actx.createBiquadFilter(); f.type='bandpass'; f.Q.value=1.2;
+  f.frequency.setValueAtTime(up?300:4500,t);
+  f.frequency.exponentialRampToValueAtTime(up?4500:300,t+dur);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.2,t+dur); g.gain.exponentialRampToValueAtTime(0.001,t+dur+0.05);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+dur+0.1); }
+function impact(t){ const s=actx.createBufferSource(); s.buffer=noiseBuf(2);
+  const f=actx.createBiquadFilter(); f.type='lowpass';
+  f.frequency.setValueAtTime(3000,t); f.frequency.exponentialRampToValueAtTime(80,t+1.6);
+  const g=actx.createGain(); g.gain.setValueAtTime(1.0,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+1.9);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+2);
+  const o=actx.createOscillator(),g2=actx.createGain();
+  o.frequency.setValueAtTime(70,t); o.frequency.exponentialRampToValueAtTime(28,t+1.2);
+  g2.gain.setValueAtTime(0.9,t); g2.gain.exponentialRampToValueAtTime(0.001,t+1.4);
+  o.connect(g2).connect(master); o.start(t); o.stop(t+1.5);
+  flash=1.15; }
+function chord(t,fs,v=0.065){ for(const f of fs){
+  const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+  const o2=actx.createOscillator(); o2.type='triangle'; o2.frequency.value=f*1.002;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(v,t+3);
+  o.connect(g); o2.connect(g); g.connect(master); g.connect(delaySend); o.start(t); o2.start(t); } }
+
+const PENTA=[110,130.81,146.83,164.81,196,220,261.63,329.63,392,440];
+let score=[], evIdx=0;
+function buildScore(){
+  const B=0.5, ev=[], push=(t,fn)=>ev.push({t,fn});
+  // 序章：宇宙闪光
+  for(const t of [1.5,4,6.5]) push(t,()=>pluck(actx.currentTime,PENTA[6+(Math.random()*4|0)]*2,0.07));
+  // 原初之汤：闪电
+  for(const t of [11,15,19,22]) push(t,()=>rumble(actx.currentTime));
+  // 大氧化：上行亮色琶音
+  [0,1,2,3,4,5,6].forEach((k,i)=>push(24.3+i*0.35,()=>pluck(actx.currentTime,PENTA[k]*2,0.14)));
+  // 寒武纪：全编制
+  for(let t=44;t<68;t+=B){ push(t,()=>{ kick(actx.currentTime,0.85); spawnQ++; speciesBonus+=137; });
+    if(t>=48) push(t+B/2,()=>hat(actx.currentTime));
+    push(t,()=>bassN(actx.currentTime,[55,55,65.4,49][Math.round((t-44)/B)%4])); }
+  for(let t=46;t<68;t+=B/2){ const i=Math.min(9,Math.floor((t-46)/22*10));
+    push(t,()=>pluck(actx.currentTime,PENTA[i],0.13)); }
+  // 巨兽：半速重锤
+  for(let t=71;t<86;t+=1) push(t,()=>kick(actx.currentTime,0.95,130));
+  for(const t of [73,79,84]) push(t,()=>pluck(actx.currentTime,PENTA[Math.random()*3|0]/2,0.12));
+  // 撞击
+  push(86,()=>sweep(actx.currentTime,2.8));
+  push(89,()=>{ impact(actx.currentTime);
+    droneGain.gain.setTargetAtTime(0,actx.currentTime,0.02);
+    sawGain.gain.setTargetAtTime(0,actx.currentTime,0.02); });
+  // 意识黎明：温暖和弦
+  push(92.5,()=>chord(actx.currentTime,[110,164.81,220,261.63]));
+  // 锁相：青色纯五度和弦 + 计数器越界
+  push(110,()=>{ aiLock=true; chord(actx.currentTime,[220,330,440],0.05); pulse=1.2; });
+  push(116,()=>pluck(actx.currentTime,880,0.1));
+  score=ev.sort((a,b)=>a.t-b.t);
+}
+function musicUpdate(el){
+  if(!actx) return;
+  const dg = el<8?0.06 : el<24?0.09 : el<27?0.05 : el<44?0.05 : el<71?0.08 : el<86?0.06
+           : el<92?0 : el<124?0.045 : 0.045;
+  droneGain.gain.setTargetAtTime(dg, actx.currentTime, 1.0);
+  sawGain.gain.setTargetAtTime(inR(el,71,89)?0.1:0, actx.currentTime, 1.5);
+  while(evIdx<score.length && score[evIdx].t<=el) score[evIdx++].fn();
+  // 有机心跳（94 起；104 后被拉向机械节拍，110 锁相）
+  if(el>=94 && el<116 && el>=nextHB){
+    heartbeat(actx.currentTime, 0.5);
+    const k=smooth(el,104,110);
+    const iv=lerp(0.83,0.5,k)*(1+ (1-k)*0.06*(Math.random()-0.5));
+    nextHB=el+iv;
+  }
+  // 机械时钟：完美等间隔
+  if(el>=104 && el<114 && el>=nextClick){ clickM(actx.currentTime); nextClick+=0.5; }
+  // 意识黎明星光
+  if(el>=96 && el<114 && el>=nextSpark){
+    nextSpark=el+1.2; pluck(actx.currentTime,PENTA[4+(Math.random()*6|0)]*2,0.05); }
+}
+
+// ---------- 场景系统 ----------
+const GOLD=[212,175,105], CYAN=[120,220,255];
+let stars=[], soup=[], cells=[], creatures=[], beasts=[], mammals=[], nodes=[], pulsesArr=[];
+let helixT=0, lightningT=-9999;
+
+// 点阵地球
+const GLOBE_PTS=[];
+const CONTINENTS=[{la:45,lo:-100},{la:-15,lo:-60},{la:5,lo:20},{la:50,lo:60},{la:-25,lo:135},{la:-80,lo:0}];
+function globeSetup(){
+  for(let la=-80;la<=80;la+=7) for(let lo=0;lo<360;lo+=7)
+    GLOBE_PTS.push({la:la*Math.PI/180, lo:lo*Math.PI/180});
+}
+function contAmt(el){ return kf([[0,0],[71,0],[86,0.25],[104,0.75],[114,1]],el); }
+function isLand(la,lo,amt){
+  for(const c of CONTINENTS){
+    const cla=lerp(0,c.la,amt)*Math.PI/180, clo=lerp(0,c.lo,amt)*Math.PI/180;
+    const d=Math.hypot(la-cla,(lo-clo)*Math.cos(la));
+    if(d<0.32) return true;
+  } return false;
+}
+function atmoColor(el){
+  if(el<8) return [255,120,60];                    // 冥古宙·熔岩
+  if(inR(el,24,27)){ const k=smooth(el,24,27);     // 大氧化：黄绿→蓝
+    return [lerp(190,120,k),lerp(190,180,k),lerp(90,255,k)]; }
+  if(inR(el,40,44)) return [210,225,255];          // 雪球
+  if(el>=114) return [90,130,200];                 // 夜
+  return [120,180,255];
+}
+function drawGlobe(cx,cy,r,rot,el,alpha,night){
+  const amt=contAmt(el), [ar,ag,ab]=atmoColor(el);
+  // 大气辉光
+  const ctx=drawingContext;
+  const g=ctx.createRadialGradient(cx,cy,r*0.9,cx,cy,r*1.35);
+  g.addColorStop(0,`rgba(${ar},${ag},${ab},${0.22*alpha})`);
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.save(); ctx.fillStyle=g; ctx.beginPath();
+  ctx.arc(cx,cy,r*1.35,0,Math.PI*2); ctx.fill(); ctx.restore();
+  noStroke();
+  for(const p of GLOBE_PTS){
+    const lo=p.lo+rot;
+    const x=Math.cos(p.la)*Math.sin(lo), y=Math.sin(p.la), z=Math.cos(p.la)*Math.cos(lo);
+    if(z<=0.02) continue;
+    const sx=cx+r*x, sy=cy-r*y;
+    if(isLand(p.la,p.lo,amt)){
+      if(night){ // 城市灯光
+        const tw=Math.random()<0.02?1:0;
+        fill(255,214,140,alpha*(140+z*115+tw*100)); circle(sx,sy,1.4+z);
+      } else { fill(GOLD[0],GOLD[1],GOLD[2],alpha*(90+z*140)); circle(sx,sy,1.2+z); }
+    } else if(!night){ fill(80,110,150,alpha*(40+z*70)); circle(sx,sy,1); }
+  }
+  if(night){ // 青色数据弧：AI 的血管
+    stroke(CYAN[0],CYAN[1],CYAN[2],alpha*90); strokeWeight(0.8); noFill();
+    for(let k=0;k<7;k++){
+      const a1=Math.random()*Math.PI*2, a2=a1+0.6+Math.random();
+      bezier(cx+r*0.8*Math.cos(a1), cy+r*0.8*Math.sin(a1),
+             cx+r*1.2*Math.cos((a1+a2)/2), cy+r*1.2*Math.sin((a1+a2)/2),
+             cx+r*1.2*Math.cos((a1+a2)/2), cy+r*1.2*Math.sin((a1+a2)/2),
+             cx+r*0.8*Math.cos(a2), cy+r*0.8*Math.sin(a2));
+    }
+  }
+}
+
+// 程序化生物生成器
+function makeCreature(beast){
+  const side=Math.random()<0.5?-1:1;
+  return { x: side<0?-60:width+60, y: random(height*0.2,height*0.8),
+    vx: -side*random(0.4,1.1)*(beast?0.35:1), s: beast?random(180,320):random(14,42),
+    k1: 2+(Math.random()*5|0), k2: 5+(Math.random()*8|0),
+    a1: random(0.15,0.5), a2: random(0.1,0.35), p: random(TWO_PI),
+    wig: random(TWO_PI), beast, dead:false, dieT:0 };
+}
+function drawCreature(c,alpha){
+  push(); translate(c.x,c.y);
+  rotate(Math.sin(c.wig)*0.12 + (c.vx>0?0:PI));
+  const n=40;
+  if(c.beast){ fill(6,10,8,alpha*230); stroke(GOLD[0],GOLD[1],GOLD[2],alpha*60); }
+  else { noFill(); stroke(GOLD[0],GOLD[1],GOLD[2],alpha*200); }
+  strokeWeight(c.beast?2:1.4);
+  beginShape();
+  for(let i=0;i<=n;i++){ const th=i/n*TWO_PI;
+    const r=c.s*(1+c.a1*Math.sin(c.k1*th+c.p)+c.a2*Math.sin(c.k2*th-c.p*1.7));
+    vertex(r*Math.cos(th), r*Math.sin(th)*0.6); }
+  endShape(CLOSE);
+  // 附肢
+  if(!c.beast){ const legs=6+(c.k1%4)*2;
+    for(let l=0;l<legs;l++){ const th=l/legs*TWO_PI+c.p;
+      const r=c.s*(1+c.a1*Math.sin(c.k1*th+c.p));
+      line(r*Math.cos(th)*0.9, r*Math.sin(th)*0.55,
+           r*Math.cos(th)*1.25, r*Math.sin(th)*0.75+Math.sin(c.wig*3+l)*4); }
+    noStroke(); fill(255,240,210,alpha*220); circle(c.s*0.7,-c.s*0.12,3); // 眼睛
+  }
+  pop();
+}
+
+function setup(){
+  createCanvas(windowWidth,windowHeight);
+  pixelDensity(Math.min(2,displayDensity()));
+  textFont('serif'); globeSetup(); makeGrain();
+  for(let i=0;i<160;i++) stars.push({x:random(width),y:random(height),s:random(0.5,1.8),tw:random(TWO_PI)});
+  for(let i=0;i<420;i++) soup.push({x:random(width),y:random(height),vx:0,vy:0});
+  // 时间轴灭绝刻度
+  const tl=document.getElementById('tl');
+  for(const y of [4.44e8,3.72e8,2.52e8,2.01e8,6.6e7]){
+    const d=document.createElement('div'); d.className='extinct';
+    d.style.left=((4.6e9-y)/4.6e9*100)+'%'; tl.appendChild(d);
+  }
+  document.getElementById('gate').addEventListener('click',function(){
+    initAudio(); t0=millis(); this.classList.add('hide');
+    document.body.classList.add('playing');
+  },{once:true});
+  window.addEventListener('keydown',e=>{ if(e.key==='r'||e.key==='R') location.reload(); });
+}
+function makeGrain(){
+  const c=document.createElement('canvas'); c.width=c.height=220;
+  const x=c.getContext('2d'), img=x.createImageData(220,220);
+  for(let i=0;i<img.data.length;i+=4){ const v=(Math.random()*255)|0;
+    img.data[i]=img.data[i+1]=img.data[i+2]=v; img.data[i+3]=255; }
+  x.putImageData(img,0,0);
+  document.getElementById('grain').style.background=`url(${c.toDataURL()})`;
+}
+
+let factIdx=0, chapIdx=0, eraCur=-1, hudTick=0;
+function draw(){
+  background(0);
+  if(t0===null) return;
+  const el=now(), cx=width/2, cy=height/2;
+  musicUpdate(el);
+  pulse*=0.92; flash*=0.93; veil*=0.985;
+
+  // ---- 海水色调 ----
+  const sea = smooth(el,6.5,8)*(1-smooth(el,113,116));
+  background(3+sea*2, 8+sea*8, 10+sea*10);
+
+  // ---- 星空（序章/尾声） ----
+  const starA=1-sea;
+  if(starA>0.02){ noStroke();
+    for(const s of stars){ fill(255,240,220,starA*(60+50*Math.sin(el*2+s.tw)));
+      circle(s.x,s.y,s.s); } }
+
+  // ---- 点阵地球窗口 ----
+  if(el<8){ // 序章俯冲
+    const sc=lerp(0.5,1.3,smooth(el,0,6)) * lerp(1,9,smooth(el,6.2,8));
+    drawGlobe(cx,cy,Math.min(width,height)*0.32*sc, el*0.15, el, 1, false);
+    if(el>6.8){ fill(3,10,14,smooth(el,6.8,8)*255); rect(0,0,width,height); }
+  }
+  for(const [a,b,mode] of [[24,27,'t'],[40,44,'t'],[68,71,'t']]){
+    if(inR(el,a,b)){ const k=smooth(el,a,a+0.8)*(1-smooth(el,b-0.8,b));
+      fill(0,k*140); rect(0,0,width,height);
+      drawGlobe(cx,cy,Math.min(width,height)*0.3,el*0.2,el,k,false); } }
+
+  // ---- DNA 双螺旋时间之河 ----
+  const helixA=smooth(el,8,10)*(1-smooth(el,112,116));
+  if(helixA>0.01){
+    helixT+=0.02+pulse*0.02;
+    const A=height*0.045, rungA=helixA*(40+pulse*60);
+    for(const ph of [0,PI]){
+      stroke(GOLD[0],GOLD[1],GOLD[2],helixA*(46+pulse*80)); strokeWeight(1.3); noFill();
+      beginShape();
+      for(let x=-10;x<=width+10;x+=8)
+        vertex(x, cy+A*Math.sin(x*0.012-helixT*2+ph) + Math.sin(x*0.002+helixT)*10);
+      endShape(); }
+    for(let x=0;x<width;x+=46){ const ph=(x*0.012-helixT*2)%(PI*2);
+      if(Math.abs(Math.sin(ph))<0.32){ const y1=cy+A*Math.sin(x*0.012-helixT*2),
+        y2=cy+A*Math.sin(x*0.012-helixT*2+PI);
+        stroke(GOLD[0],GOLD[1],GOLD[2],rungA*0.6); line(x,y1,x,y2); } } }
+
+  // ---- 幕场景 ----
+  if(inR(el,8,44)) drawSoup(el,sea);
+  if(inR(el,27,44)) drawCells(el);
+  if(inR(el,44,71)) drawCreatures(el,false);
+  if(inR(el,71,89.5)) drawCreatures(el,true);
+  if(inR(el,89,96)) drawDying(el);
+  if(inR(el,92,102)) drawMammals(el);
+  if(el>=98 && el<116) drawNetwork(el);
+  if(el>=114){ drawGlobe(cx,cy,Math.min(width,height)*0.34,el*0.1,el,smooth(el,114,116),true); }
+
+  // 雪球冰霜
+  if(inR(el,40,44)){ const k=smooth(el,40,41.5)*(1-smooth(el,43,44));
+    noStroke(); for(let i=0;i<200;i++){ fill(210,228,255,k*random(30,90));
+      circle(random(width),random(height),random(1,3)); }
+    fill(190,215,255,k*36); rect(0,0,width,height); }
+
+  // 大灭绝灰幕
+  if(el>=89) veil=Math.max(veil, 0.5*smooth(el,89,90)*(1-smooth(el,92,97)));
+  if(veil>0.01){ fill(60,60,62,veil*255); rect(0,0,width,height); }
+
+  // 中心呼吸光（生命之心，随心跳）
+  if(el>=27 && el<114){
+    const r=5+pulse*10;
+    const gA=el>=104? smooth(el,104,110):0;   // AI 幕渐染青
+    drawGlow(cx,cy,r,40+r*3,150,
+      [lerp(255,CYAN[0],gA),lerp(232,CYAN[1],gA),lerp(170,CYAN[2],gA)]); }
+
+  // 闪电白闪
+  const ls=(performance.now()-lightningT)/1000;
+  if(ls<0.25){ noStroke(); fill(255,250,235,(1-ls/0.25)*70); rect(0,0,width,height); }
+  if(flash>0.01){ noStroke(); fill(255,245,225,flash*230); rect(0,0,width,height); }
+
+  updateHUD(el);
+}
+
+// 原初之汤：流场粒子 + 热泉气泡
+function drawSoup(el,a){
+  noStroke();
+  for(const p of soup){
+    const ang=noise(p.x*0.002,p.y*0.002,el*0.05)*TWO_PI*2;
+    p.vx=lerp(p.vx,Math.cos(ang)*1.2,0.05); p.vy=lerp(p.vy,Math.sin(ang)*1.2,0.05);
+    p.x+=p.vx; p.y+=p.vy;
+    if(p.x<0)p.x+=width; if(p.x>width)p.x-=width;
+    if(p.y<0)p.y+=height; if(p.y>height)p.y-=height;
+    fill(GOLD[0],GOLD[1]+20,GOLD[2]-40, a*70); circle(p.x,p.y,1.4);
+  }
+  // 热泉气泡
+  if(Math.random()<0.4) soup.push();  // noop 保持数组
+  for(let i=0;i<3;i++){ const bx=width*(0.2+i*0.3)+Math.sin(el+i)*30;
+    const by=height-((el*40+i*130)%height);
+    fill(180,200,220,a*50); circle(bx+Math.sin(el*3+i)*8, by, 3+2*Math.sin(el*5+i)); }
+}
+
+// 细胞纪元：粒子聚集成膜球，分裂
+function drawCells(el){
+  if(cells.length<1 && el>27.5) cells.push({x:width/2,y:height/2,r:26,w:random(TWO_PI)});
+  if(Math.random()<0.008 && cells.length<34){
+    const c=cells[(Math.random()*cells.length)|0]; if(c.r>14){
+      c.r*=0.72;
+      cells.push({x:c.x+random(-40,40),y:c.y+random(-40,40),r:c.r,w:random(TWO_PI)});
+      pulse=Math.min(1.2,pulse+0.35); } }
+  for(const c of cells){
+    c.w+=0.02; c.x+=Math.sin(c.w*0.7)*0.3; c.y+=Math.cos(c.w*0.5)*0.3;
+    noFill(); stroke(GOLD[0],GOLD[1],GOLD[2],130); strokeWeight(1.5);
+    beginShape();
+    for(let i=0;i<=24;i++){ const th=i/24*TWO_PI;
+      const rr=c.r*(1+0.12*Math.sin(th*3+c.w*2));
+      vertex(c.x+rr*Math.cos(th), c.y+rr*Math.sin(th)); }
+    endShape(CLOSE);
+    noStroke(); fill(255,232,170,120); circle(c.x,c.y,c.r*0.32);
+  }
+}
+
+// 寒武纪 / 巨兽
+function drawCreatures(el,beast){
+  const cap=beast?3:26;
+  const want=beast? 0.012 : 0.05+spawnQ*0.02;
+  spawnQ=0;
+  const arr=creatures.filter(c=>!!c.beast===!!beast && !c.dead);
+  if(arr.length<cap && Math.random()<want) creatures.push(makeCreature(beast));
+  const alpha = beast? 0.9 : 1;
+  for(const c of creatures){
+    if(!!c.beast!==!!beast) continue;
+    c.wig+=0.05; c.x+=c.vx*(beast?0.5:1+ pulse*0.8);
+    c.y+=Math.sin(c.wig*0.6)*0.4;
+    if(c.x<-c.s*2||c.x>width+c.s*2){ c.dead=true; continue; }
+    drawCreature(c,alpha);
+  }
+  creatures=creatures.filter(c=>!c.dead);
+}
+
+// 大灭绝：万物坠落
+function drawDying(el){
+  const k=smooth(el,89,91.5);
+  for(const c of creatures){ c.y+=k*3; drawCreature(c,1-k); }
+  if(el>91.5) creatures=[];
+}
+
+// 哺乳动物：敏捷小点
+function drawMammals(el){
+  while(mammals.length<40) mammals.push({x:random(width),y:random(height*0.6,height*0.95),vx:0,vy:0});
+  noStroke();
+  for(const m of mammals){
+    if(Math.random()<0.1){ m.vx=random(-2.5,2.5); m.vy=random(-1,1); }
+    m.x=constrain(m.x+m.vx,0,width); m.y=constrain(m.y+m.vy,height*0.5,height);
+    fill(255,200,140,150); circle(m.x,m.y,2.2);
+  }
+}
+
+// 神经网 → AI：金→青的感染蔓延
+function drawNetwork(el){
+  // 节点生长
+  if(el>=lastNodeT && nodes.length<90){ lastNodeT=el+0.18;
+    nodes.push({x:random(width*0.12,width*0.88), y:random(height*0.15,height*0.85),
+      cyanT: Infinity}); }
+  // AI 感染：从中心最近的节点开始按距离排序染色
+  if(el>=104 && nodes.length && nodes[0].cyanT===Infinity){
+    const cx=width/2, cy=height/2;
+    nodes.forEach(n=>n.d=Math.hypot(n.x-cx,n.y-cy));
+    nodes.sort((a,b)=>a.d-b.d);
+    const maxD=nodes[nodes.length-1].d||1;
+    nodes.forEach(n=>n.cyanT=104+ (n.d/maxD)*5);
+  }
+  // 连线
+  strokeWeight(0.7);
+  for(let i=0;i<nodes.length;i++) for(let j=i+1;j<nodes.length;j++){
+    const a=nodes[i],b=nodes[j], d=Math.hypot(a.x-b.x,a.y-b.y);
+    if(d<150){ const cyan=(el>=a.cyanT||el>=b.cyanT);
+      const c=cyan?CYAN:GOLD;
+      stroke(c[0],c[1],c[2], (1-d/150)*(cyan?70:40)); line(a.x,a.y,b.x,b.y); } }
+  // 脉冲
+  if(el>=98.5 && Math.random()<0.25 && nodes.length>2){
+    const a=nodes[(Math.random()*nodes.length)|0];
+    let best=null,bd=1e9;
+    for(const n of nodes){ const d=Math.hypot(a.x-n.x,a.y-n.y);
+      if(d>1&&d<150&&d<bd){bd=d;best=n;} }
+    if(best) pulsesArr.push({a,b:best,k:0});
+  }
+  noStroke();
+  for(const p of pulsesArr){ p.k+=0.03;
+    const x=lerp(p.a.x,p.b.x,p.k), y=lerp(p.a.y,p.b.y,p.k);
+    const cyan=el>=p.b.cyanT;
+    const c=cyan?CYAN:[255,232,170];
+    fill(c[0],c[1],c[2],180); circle(x,y,2.5); }
+  pulsesArr=pulsesArr.filter(p=>p.k<1);
+  // 节点
+  for(const n of nodes){ const cyan=el>=n.cyanT;
+    const c=cyan?CYAN:GOLD;
+    drawGlow(n.x,n.y, 2.4, 16, cyan?220:150, [c[0],c[1],c[2]]); }
+  // AI 网格背景
+  if(el>=104){ const k=smooth(el,104,110)*0.05;
+    stroke(CYAN[0],CYAN[1],CYAN[2],k*255); strokeWeight(0.5);
+    for(let x=0;x<width;x+=60) line(x,0,x,height);
+    for(let y=0;y<height;y+=60) line(0,y,width,y); }
+}
+
+function drawGlow(x,y,core,glow,alpha,rgb){
+  const ctx=drawingContext, c=rgb||[212,175,105];
+  const g=ctx.createRadialGradient(x,y,0,x,y,glow);
+  g.addColorStop(0,`rgba(${c[0]},${c[1]},${c[2]},${0.8*alpha/255})`);
+  g.addColorStop(1,`rgba(${c[0]},${c[1]},${c[2]},0)`);
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,glow,0,Math.PI*2); ctx.fill(); ctx.restore();
+  noStroke(); fill(c[0],c[1],c[2],alpha); circle(x,y,core);
+}
+
+// ---------- HUD ----------
+function updateHUD(el){
+  const yrs=kf(YEARS,el);
+  const eraI=ERAS.findIndex((e,i)=>el>=e[0] && (i===ERAS.length-1||el<ERAS[i+1][0]));
+  if(eraI!==eraCur && eraI>=0){ eraCur=eraI;
+    document.getElementById('era').innerHTML=
+      `${ERAS[eraI][1]}<small>${ERAS[eraI][2]}</small>`; }
+  document.getElementById('yearNum').textContent=
+    (el>=110 && el<124) ? '→ 未来' : fmtYears(yrs);
+  document.getElementById('speed').textContent=fmtSpeed(kfSlope(YEARS,el));
+  document.getElementById('tlDot').style.left=
+    (constrain((4.6e9-yrs)/4.6e9,0,1)*100)+'%';
+  // 快闪字幕
+  while(factIdx<FACTS.length && el>=FACTS[factIdx][0]){
+    const f=document.getElementById('fact');
+    f.classList.remove('lit'); const txt=FACTS[factIdx][1];
+    setTimeout(()=>{ f.textContent=txt; f.classList.add('lit'); },350);
+    setTimeout(()=>f.classList.remove('lit'),2900);
+    factIdx++; }
+  // 章节闪字
+  while(chapIdx<CHAPTERS.length && el>=CHAPTERS[chapIdx][0]){
+    const ch=document.getElementById('chapter');
+    const [_,txt,cyan]=CHAPTERS[chapIdx];
+    ch.classList.remove('lit'); ch.classList.toggle('cyan',!!cyan);
+    setTimeout(()=>{ ch.textContent=txt; ch.classList.add('lit'); },400);
+    setTimeout(()=>ch.classList.remove('lit'),3000);
+    chapIdx++; }
+  // 萨根
+  if(el>=116) document.getElementById('sagan').classList.add('lit');
+  if(el>=122.5){ document.getElementById('sagan').classList.remove('lit');
+    document.getElementById('endmark').classList.add('lit'); }
+  // 数据表（节流）
+  if(++hudTick%5) return;
+  document.getElementById('mO2').textContent=kf(O2K,el).toFixed(1)+'%';
+  document.getElementById('mT').textContent=Math.round(kf(TEMPK,el))+'°C';
+  const sp=document.getElementById('mS'), row=document.getElementById('spRow');
+  if(el<44) sp.textContent='—';
+  else { let v=kf(SPPK,el)+ (inR(el,44,68)?speciesBonus*0.3:0);
+    if(aiLock){ v=8700001; row.classList.add('ai'); }
+    sp.textContent=Math.round(v).toLocaleString(); }
+}
+</script>
+</body>
+</html>

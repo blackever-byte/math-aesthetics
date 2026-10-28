@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>欧拉公式 · 一镜到底</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<style>
+  html, body { margin:0; padding:0; background:#000; overflow:hidden; height:100%; }
+  body.playing { cursor:none; }
+  canvas { display:block; }
+  .serif { font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; font-weight:300; }
+
+  /* 2.35:1 遮幅 */
+  .bar { position:fixed; left:0; right:0; height:max(9vh, calc((100vh - 100vw/2.35)/2));
+         background:#000; z-index:5; pointer-events:none; }
+  #barT { top:0; } #barB { bottom:0; }
+
+  #vignette { position:fixed; inset:0; pointer-events:none; z-index:4;
+    background:radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.62) 100%); }
+
+  /* 胶片颗粒（背景图由 JS 运行时生成） */
+  #grain { position:fixed; inset:-120px; pointer-events:none; z-index:6; opacity:0.05;
+    animation:gr 0.6s steps(2) infinite; }
+  @keyframes gr {
+    0%{transform:translate(0,0)} 25%{transform:translate(-34px,22px)}
+    50%{transform:translate(24px,-28px)} 75%{transform:translate(-18px,-12px)}
+    100%{transform:translate(0,0)} }
+
+  /* 章节大字 / 公式 */
+  #chapter {
+    position:fixed; left:0; right:0; top:16vh; text-align:center; pointer-events:none; z-index:7;
+    color:rgba(232,200,140,0); font-size:clamp(34px,5vw,64px);
+    letter-spacing:0.55em; text-indent:0.55em;
+    transition:color 2.4s ease, text-shadow 2.4s ease;
+    text-shadow:0 0 50px rgba(212,175,105,0);
+  }
+  #chapter.lit { color:rgba(232,200,140,0.92); text-shadow:0 0 70px rgba(212,175,105,0.4); }
+  #chapter sup { font-size:0.5em; letter-spacing:0.1em; }
+  #caption {
+    position:fixed; left:0; right:0; top:calc(16vh + clamp(60px,9vw,110px)); text-align:center;
+    pointer-events:none; z-index:7; color:rgba(212,175,105,0);
+    font-size:clamp(12px,1.3vw,16px); letter-spacing:0.6em; text-indent:0.6em;
+    transition:color 2.4s ease;
+  }
+  #caption.lit { color:rgba(212,175,105,0.55); }
+
+  #endmark {
+    position:fixed; left:0; right:0; bottom:calc(max(9vh,(100vh - 100vw/2.35)/2) + 3vh);
+    text-align:center; pointer-events:none; z-index:7;
+    color:rgba(212,175,105,0); font-size:11px; letter-spacing:0.5em; text-indent:0.5em;
+    transition:color 3s ease; font-family:Georgia,serif; font-style:italic;
+  }
+  #endmark.lit { color:rgba(212,175,105,0.3); }
+
+  #gate {
+    position:fixed; inset:0; display:flex; flex-direction:column; z-index:20;
+    align-items:center; justify-content:center; cursor:pointer;
+    background:#000; transition:opacity 2s ease;
+  }
+  #gate.hide { opacity:0; pointer-events:none; }
+  #gate .big { color:rgba(232,200,140,0.9); font-size:clamp(20px,3vw,34px);
+    letter-spacing:0.6em; text-indent:0.6em; animation:breathe 4s ease-in-out infinite; }
+  #gate .sub { margin-top:3em; color:rgba(200,170,120,0.35); font-size:12px;
+    letter-spacing:0.45em; text-indent:0.45em; }
+  @keyframes breathe { 0%,100%{opacity:0.5} 50%{opacity:1} }
+</style>
+</head>
+<body>
+
+<div id="gate" class="serif">
+  <div class="big">e<sup>iπ</sup> + 1 = 0</div>
+  <div class="sub">一 部 90 秒 的 长 镜 头 · 点 击 开 场 · 请 戴 耳 机</div>
+</div>
+<div id="chapter" class="serif"></div>
+<div id="caption" class="serif"></div>
+<div id="endmark">数与美 · 欧拉公式 · made with vibe coding</div>
+<div class="bar" id="barT"></div><div class="bar" id="barB"></div>
+<div id="vignette"></div><div id="grain"></div>
+
+<script>
+/* ================================================================
+ * e^{iπ} + 1 = 0 —— 一镜到底短片
+ *
+ * 五幕：0 虚空 → 1,i 坐标展开 → e 旋转(θ:0→π, 50s) → π 抵达(静默一拍)
+ *       → 合一(公式浮现, 五常数环绕)
+ * 虚拟摄影机：推/拉/环绕/升降，全程缓动，无硬切。
+ * 配乐：Web Audio 现场合成 —— drone、心跳、随 θ 上行的小调琶音、
+ *       四四底鼓、尾声五声音阶和弦。音画同一张时间表驱动。
+ * ================================================================ */
+
+// ---------- 时间轴（秒） ----------
+const T = { axes:10, rotate:25, arrive:75, silence:76.3, chord:76.4 };
+let t0 = null;                       // 开场时刻（点击后）
+const now = () => (millis() - t0) / 1000;
+
+// ---------- 摄影机 ----------
+// 关键帧: [t, zoom, orbit(rad), tilt(纵向压扁=升起)]
+const CAM = [
+  [0,   0.50, 0.00, 1.00],
+  [10,  0.50, 0.00, 1.00],   // 第一幕：凝视虚空
+  [16,  0.85, 0.00, 1.00],   // 推近
+  [25,  1.00, 0.00, 1.00],   // 正面全景
+  [45,  0.90, 0.35, 0.90],   // 开始环绕 + 升起
+  [70,  0.75, 0.62, 0.72],   // 高位俯瞰
+  [74.6,0.85, 0.62, 0.80],   // 逼近
+  [75.3,1.12, 0.60, 0.85],   // 抵达瞬间快速推近（仍缓动）
+  [80,  0.62, 0.35, 0.95],   // 拉远回落
+  [90,  0.50, 0.00, 1.00],   // 收幅：端正全景
+];
+function smoother(x){ return x*x*x*(x*(x*6-15)+10); }
+function camAt(el) {
+  if (el <= CAM[0][0]) return CAM[0].slice(1);
+  for (let i=0;i<CAM.length-1;i++) {
+    const a=CAM[i], b=CAM[i+1];
+    if (el <= b[0]) {
+      const k = smoother((el-a[0])/(b[0]-a[0]));
+      return [1,2,3].map(j => a[j]+(b[j]-a[j])*k);
+    }
+  }
+  return CAM[CAM.length-1].slice(1);
+}
+
+// ---------- 字幕脚本 ----------
+const LINES = [
+  { t:2.0,  big:'0',                 cap:'从 零 开 始' },
+  { t:8.0,  big:'',                  cap:'' },
+  { t:12.5, big:'1 , i',             cap:'实 与 虚 的 坐 标' },
+  { t:19.0, big:'',                  cap:'' },
+  { t:26.5, big:'e',                 cap:'旋 转 即 是 增 长' },
+  { t:31.0, big:'',                  cap:'' },
+  { t:73.4, big:'π',                 cap:'' },
+  { t:74.9, big:'',                  cap:'' },
+  { t:77.6, big:'e<sup>iπ</sup> + 1 = 0', cap:'万 物 归 一', hold:true },
+];
+let lineIdx = 0;
+function runLines(el) {
+  while (lineIdx < LINES.length && el >= LINES[lineIdx].t) {
+    const L = LINES[lineIdx++];
+    const ch = document.getElementById('chapter');
+    const cp = document.getElementById('caption');
+    ch.classList.remove('lit'); cp.classList.remove('lit');
+    if (L.big) setTimeout(()=>{ ch.innerHTML=L.big; ch.classList.add('lit'); }, 700);
+    if (L.cap) setTimeout(()=>{ cp.textContent=L.cap; cp.classList.add('lit'); }, 1300);
+    if (L.hold) setTimeout(()=>document.getElementById('endmark').classList.add('lit'), 3500);
+  }
+}
+
+// ---------- 配乐 ----------
+const SCALE = [110,130.81,146.83,164.81,196,220,261.63,329.63,392,440]; // A 小调五声爬升
+let actx, master, droneGain, delaySend;
+let score = [], evIdx = 0;
+let pulse = 0, flash = 0, shockT = -1;
+let lastHB = 78, lastSpark = 77.6;
+
+function initAudio() {
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  master = actx.createGain(); master.gain.value = 0.85; master.connect(actx.destination);
+  // 混响感：简易反馈延迟
+  const dly = actx.createDelay(1); dly.delayTime.value = 0.28;
+  const fb = actx.createGain(); fb.gain.value = 0.34;
+  const wet = actx.createGain(); wet.gain.value = 0.22;
+  delaySend = actx.createGain();
+  delaySend.connect(dly); dly.connect(fb); fb.connect(dly); dly.connect(wet); wet.connect(master);
+  // drone：双振荡低频底床
+  droneGain = actx.createGain(); droneGain.gain.value = 0;
+  const lp = actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=240;
+  for (const f of [55, 82.41]) {
+    const o = actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+    o.connect(droneGain); o.start();
+  }
+  droneGain.connect(lp); lp.connect(master);
+  buildScore();
+}
+function kick(t, v=0.9, f0=150) {
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(40,t+0.12);
+  g.gain.setValueAtTime(v,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.3);
+  o.connect(g).connect(master); o.start(t); o.stop(t+0.32);
+  pulse = Math.min(1.2, pulse + v);
+}
+function hat(t) {
+  const s=actx.createBufferSource(); s.buffer=noiseBuf(0.08);
+  const f=actx.createBiquadFilter(); f.type='highpass'; f.frequency.value=8000;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.16,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.045);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+0.06);
+}
+function pluck(t, f, v) {
+  const o=actx.createOscillator(); o.type='triangle'; o.frequency.value=f;
+  const g=actx.createGain();
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+0.015);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.4);
+  o.connect(g); g.connect(master); g.connect(delaySend);
+  o.start(t); o.stop(t+0.45);
+}
+function sweep(t, dur) {
+  const s=actx.createBufferSource(); s.buffer=noiseBuf(dur);
+  const f=actx.createBiquadFilter(); f.type='bandpass'; f.Q.value=1.2;
+  f.frequency.setValueAtTime(300,t); f.frequency.exponentialRampToValueAtTime(4500,t+dur);
+  const g=actx.createGain();
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.22,t+dur);
+  g.gain.exponentialRampToValueAtTime(0.001,t+dur+0.05);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+dur+0.1);
+}
+function chord(t) {
+  for (const f of [110,164.81,220,261.63,329.63]) {
+    const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+    const o2=actx.createOscillator(); o2.type='triangle'; o2.frequency.value=f*1.003;
+    const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(0.07,t+3.2);
+    o.connect(g); o2.connect(g); g.connect(master); g.connect(delaySend);
+    o.start(t); o2.start(t);
+  }
+}
+let _nb={};
+function noiseBuf(sec) {
+  if (_nb[sec]) return _nb[sec];
+  const b=actx.createBuffer(1, actx.sampleRate*sec, actx.sampleRate);
+  const d=b.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+  return _nb[sec]=b;
+}
+function buildScore() {
+  const B = 0.625, ev = [];
+  const push = (t, fn) => ev.push({t, fn});
+  for (let t=1.5; t<10; t+=2) push(t, ()=>kick(actx.currentTime, 0.42, 110));       // 第一幕心跳
+  for (let t=T.rotate; t<74.9; t+=B) {                                              // 四四底鼓
+    push(t, ()=>kick(actx.currentTime, 0.9));
+    if (t>=70) push(t+B/2, ()=>kick(actx.currentTime, 0.65));                       // 渐强双踩
+  }
+  for (let t=35; t<74.9; t+=B) push(t+B/2, ()=>hat(actx.currentTime));
+  for (let t=30; t<74.9; t+=B/2) {                                                  // 随 θ 上行的琶音
+    const th = Math.PI*Math.min(1,(t-T.rotate)/50);
+    const idx = Math.min(SCALE.length-1, Math.floor(th/Math.PI*SCALE.length));
+    const v = 0.16 + 0.22*(t-30)/44;
+    push(t, ()=>{ pluck(actx.currentTime, SCALE[idx], v);
+                  if (idx>4) pluck(actx.currentTime, SCALE[idx]/2, v*0.5); });
+  }
+  push(70, ()=>sweep(actx.currentTime, 4.8));                                       // 高潮白噪上扫
+  push(T.arrive, ()=>{ flash=1; shockT=performance.now();                           // 抵达：静默一拍+白光
+                       droneGain.gain.setTargetAtTime(0, actx.currentTime, 0.03); });
+  push(T.chord, ()=>chord(actx.currentTime));                                       // 收束和弦
+  score = ev.sort((a,b)=>a.t-b.t);
+}
+function musicUpdate(el) {
+  if (!actx) return;
+  // drone 各幕目标电平
+  const dg = el<10 ? 0.05 : el<T.rotate ? 0.08 : el<74.9 ? 0.1 : el<T.silence ? 0 : 0.045;
+  if (el < 74.9 || el > T.silence)
+    droneGain.gain.setTargetAtTime(dg, actx.currentTime, 1.2);
+  while (evIdx < score.length && score[evIdx].t <= el) score[evIdx++].fn();
+  // 尾声：慢心跳 + 随机星光琶音
+  if (el > T.chord) {
+    if (el - lastHB > 2.6) { lastHB = el; kick(actx.currentTime, 0.3, 100); }
+    if (el - lastSpark > 1.3) { lastSpark = el;
+      pluck(actx.currentTime, SCALE[4+((Math.random()*6)|0)]*2, 0.06); }
+  }
+}
+
+// ---------- 场景 ----------
+let trail;
+const GOLD=[212,175,105];
+const thetaOf = el => Math.PI * constrain((el-T.rotate)/50, 0, 1);
+let samples = [];   // 示波器采样
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(Math.min(2, displayDensity()));
+  trail = createGraphics(width,height); trail.pixelDensity(pixelDensity()); trail.background(0);
+  textFont('serif');
+  makeGrain();
+  document.getElementById('gate').addEventListener('click', function(){
+    initAudio(); t0 = millis(); this.classList.add('hide');
+    document.body.classList.add('playing');
+  }, {once:true});
+  window.addEventListener('keydown', e=>{ if(e.key==='r'||e.key==='R') location.reload(); });
+}
+function makeGrain() {
+  const c=document.createElement('canvas'); c.width=c.height=220;
+  const x=c.getContext('2d'), img=x.createImageData(220,220);
+  for(let i=0;i<img.data.length;i+=4){ const v=(Math.random()*255)|0;
+    img.data[i]=img.data[i+1]=img.data[i+2]=v; img.data[i+3]=255; }
+  x.putImageData(img,0,0);
+  document.getElementById('grain').style.background=`url(${c.toDataURL()})`;
+}
+
+// 世界坐标（复平面）→ 屏幕坐标（与 applyCam 同一份数学）
+let cam={z:1,o:0,ti:1};
+function toScreen(wx,wy){
+  const rx=wx*Math.cos(cam.o)-wy*Math.sin(cam.o), ry=wx*Math.sin(cam.o)+wy*Math.cos(cam.o);
+  return { x: width/2 + cam.z*rx, y: height/2 + cam.z*cam.ti*ry };
+}
+
+function draw() {
+  background(0);
+  if (t0===null) return;                       // 未开场：只显示 gate
+  const el = now();
+  runLines(el); musicUpdate(el);
+  pulse *= 0.92; flash *= 0.94;
+
+  const R = Math.min(width,height)*0.28;
+  const [z,o,ti] = camAt(el); cam={z,o,ti};
+  // 手持微晃（第三幕后）
+  const hand = el>T.rotate ? 1 : 0;
+  const hx = hand*1.4*Math.sin(el*0.9+Math.sin(el*0.37));
+  const hy = hand*1.1*Math.cos(el*1.1);
+
+  // ---------- 记忆衰减（屏幕空间拖影层） ----------
+  trail.noStroke(); trail.fill(0,20); trail.rect(0,0,width,height);
+
+  push();
+  translate(width/2+hx, height/2+hy); scale(z, z*ti); rotate(o);
+
+  const th = thetaOf(el);
+  const showAxes = smooth(el, T.axes, T.axes+4);
+  const showCircle = smooth(el, T.axes+6, T.axes+10);
+  const showScope = smooth(el, T.rotate, T.rotate+3);
+
+  if (el >= T.axes) drawPlane(R, showAxes, showCircle, th);
+  if (th > 0) drawPhasor(R, th, el);
+  if (showScope > 0.01) drawScope(R, th, showScope);
+
+  // 抵达冲击波
+  if (shockT>0) {
+    const st=(performance.now()-shockT)/1000;
+    if (st<2.2) { noFill();
+      for(let k=0;k<3;k++){ const rr=R*(1+st*1.8)+k*R*0.25*st;
+        stroke(255,240,210,(1-st/2.2)*120/(k+1)); strokeWeight(1.5);
+        circle(0,0,rr*2); } }
+  }
+  pop();
+
+  // ---------- 拖影层：笔尖辉光 ----------
+  if (th>0 || el<10) {
+    let tip;
+    if (th>0) tip = toScreen(R*Math.cos(th), -R*Math.sin(th));
+    else { const b=1+0.3*Math.sin(el*1.6); tip={x:width/2, y:height/2, b}; }
+    const p = toScreen(th>0?R*Math.cos(th):0, th>0?-R*Math.sin(th):0);
+    trail.noStroke();
+    trail.fill(255,232,170, el<10? 60+30*Math.sin(el*1.6) : 150);
+    trail.circle(p.x+hx, p.y+hy, el<10? 4 : 5+pulse*3);
+  }
+  image(trail,0,0);
+
+  // ---------- 终幕：五常数环绕（屏幕空间，保持可读） ----------
+  if (el > T.chord) drawConstellation(el);
+
+  // 中心光（第一幕的呼吸 / 全片的一）
+  const coreA = el<T.rotate ? 200 : 120;
+  const coreR = el<10 ? 3+1.6*Math.sin(el*1.6) : 4+pulse*4;
+  drawGlow(width/2+hx, height/2+hy, coreR, 46+coreR*4, coreA);
+
+  // 抵达白光
+  if (flash>0.01) { noStroke(); fill(255,245,225, flash*215); rect(0,0,width,height); }
+}
+const smooth=(el,a,b)=>constrain((el-a)/(b-a),0,1);
+
+// 复平面：网格、轴、单位圆、刻度标签
+function drawPlane(R, aA, aC, th) {
+  // 网格
+  stroke(212,175,105, aA*14); strokeWeight(1);
+  for(let gx=-3; gx<=4; gx++) line(gx*R, -1.4*R, gx*R, 1.4*R);
+  for(let gy=-1; gy<=1; gy++) line(-3*R, gy*R, 4.2*R, gy*R);
+  // 双轴
+  stroke(212,175,105, aA*90); strokeWeight(1.2);
+  line(-3*R,0, 4.2*R,0); line(0,-1.4*R, 0,1.4*R);
+  // 单位圆
+  noFill(); stroke(212,175,105, aC*150); strokeWeight(1.6);
+  circle(0,0,R*2);
+  // 标签
+  noStroke(); fill(212,175,105, aC*190);
+  textAlign(CENTER,CENTER); textSize(R*0.13);
+  text('1', R, R*0.16); text('i', R*0.16, -R); text('Re', 4.0*R, R*0.16); text('Im', R*0.2, -1.3*R);
+  if (th>=Math.PI-0.01 || shockT>0) {           // 抵达后 −1 亮起
+    fill(255,240,210, 220); textSize(R*0.15); text('−1', -R, R*0.2);
+  }
+}
+
+// 相位矢量 + 弧迹 + 投影
+function drawPhasor(R, th, el) {
+  const x=R*Math.cos(th), y=-R*Math.sin(th);
+  // 走过的弧（金，带呼吸亮度）
+  noFill();
+  const arcA = 150+60*Math.sin(el*0.8);
+  stroke(GOLD[0],GOLD[1],GOLD[2], arcA); strokeWeight(2.2);
+  arc(0,0,R*2,R*2, -th, 0);
+  // 投影线（虚线感：细+低透明）
+  stroke(212,175,105,70); strokeWeight(1);
+  line(x,y, x,0); line(x,y, 0,y);
+  // 投影点
+  noStroke(); fill(255,240,210,150); circle(x,0,4); circle(0,y,4);
+  // 矢量本体
+  stroke(255,232,170,230); strokeWeight(2.6); line(0,0,x,y);
+  // 角度标注
+  noStroke(); fill(212,175,105,140); textSize(R*0.11); textAlign(LEFT,CENTER);
+  text('θ', R*0.16*Math.cos(th/2), -R*0.16*Math.sin(th/2)-R*0.05);
+}
+
+// 示波器：右侧世界坐标，cos/sin 光带生长
+function drawScope(R, th, alpha) {
+  const x0=1.7*R, W=1.5*R, amp=0.55*R;
+  if (samples.length===0 || th>samples[samples.length-1]+0.001) samples.push(th);
+  stroke(212,175,105,alpha*50); strokeWeight(1); noFill();
+  rect(x0,-amp-0.12*R, W, amp*2+0.24*R);
+  line(x0,0,x0+W,0);
+  noStroke(); fill(212,175,105,alpha*150); textSize(R*0.1); textAlign(LEFT,CENTER);
+  text('cos θ', x0+W+0.08*R, -amp*0.6); text('sin θ', x0+W+0.08*R, amp*0.6);
+  // cos 金带
+  noFill(); stroke(GOLD[0],GOLD[1],GOLD[2], alpha*220); strokeWeight(2); beginShape();
+  for (const s of samples) vertex(x0+s/Math.PI*W, -Math.cos(s)*amp);
+  endShape();
+  // sin 白带
+  stroke(255,240,215, alpha*170); strokeWeight(1.6); beginShape();
+  for (const s of samples) vertex(x0+s/Math.PI*W, -Math.sin(s)*amp);
+  endShape();
+}
+
+// 终幕：e i π 1 0 五星环绕
+function drawConstellation(el) {
+  const a = smooth(el, T.chord+0.5, T.chord+4);
+  const cx=width/2, cy=height/2, rr=Math.min(width,height)*0.30;
+  const labels=['e','i','π','1','0'];
+  const base = el*0.07;
+  const pts = labels.map((_,k)=>{
+    const ang = base + k/5*TWO_PI - HALF_PI;
+    return { x:cx+rr*Math.cos(ang), y:cy+rr*Math.sin(ang) };
+  });
+  stroke(212,175,105, a*40); strokeWeight(1); noFill();   // 五边形连线
+  beginShape(); for(const p of pts) vertex(p.x,p.y); endShape(CLOSE);
+  textAlign(CENTER,CENTER); textFont('serif');
+  pts.forEach((p,k)=>{
+    drawGlow(p.x,p.y, 3, 26, a*200);
+    noStroke(); fill(232,200,140, a*230); textSize(20);
+    text(labels[k], p.x, p.y-24);
+  });
+}
+
+function drawGlow(x,y,core,glow,alpha) {
+  const ctx=drawingContext;
+  const g=ctx.createRadialGradient(x,y,0,x,y,glow);
+  g.addColorStop(0,`rgba(255,232,170,${0.85*alpha/255})`);
+  g.addColorStop(0.2,`rgba(212,175,105,${0.3*alpha/255})`);
+  g.addColorStop(1,'rgba(212,175,105,0)');
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,glow,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  noStroke(); fill(255,242,205,alpha); circle(x,y,core);
+}
+</script>
+</body>
+</html>
