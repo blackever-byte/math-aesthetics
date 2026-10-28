@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>秩序生于振动</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    height: 100%;
+  }
+  canvas { display: block; }
+
+  /* 极简标题 —— 本地衬线字体栈，不依赖外部字体，离线可用 */
+  #title {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: 7vh;
+    text-align: center;
+    pointer-events: none;
+    color: rgba(212, 175, 105, 0.85);          /* 哑金 */
+    font-family: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+    font-weight: 300;
+    font-size: clamp(18px, 2.4vw, 30px);
+    letter-spacing: 0.9em;                      /* 字距拉开，安静感 */
+    text-indent: 0.9em;                         /* 补偿末字间距，视觉居中 */
+    opacity: 0;
+    animation: titleIn 4s ease-out 1.2s forwards;
+  }
+  #title small {
+    display: block;
+    margin-top: 1.4em;
+    font-size: 0.42em;
+    letter-spacing: 0.5em;
+    text-indent: 0.5em;
+    color: rgba(212, 175, 105, 0.38);
+    font-family: Georgia, "Times New Roman", serif;
+    font-style: italic;
+  }
+  @keyframes titleIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 极淡的暗角，聚拢视线 */
+  #vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center,
+                transparent 55%, rgba(0,0,0,0.55) 100%);
+  }
+</style>
+</head>
+<body>
+<div id="title">秩序生于振动<small>order arises from vibration</small></div>
+<div id="vignette"></div>
+
+<script>
+/*
+ * 秩序生于振动 —— Lissajous 祷告
+ *
+ * 一支金色的笔在黑暗中画利萨茹曲线。
+ * 频率比随时间极缓慢地漂移，图形在「秩序」与「混沌」之间呼吸：
+ * 每当频率比掠过简单有理数（3:2, 4:3, 5:4...），曲线短暂闭合成圣像般的图案，
+ * 然后又散开。轨迹不消失，只是像记忆一样慢慢变淡。
+ */
+
+let trail;            // 离屏画布：承载逐渐变淡的轨迹
+let t = 0;            // 笔的相位时间
+let prev = null;      // 上一帧笔尖位置
+const GOLD = [212, 175, 105];
+
+// —— 氛围旋钮（改这几个数就能调「脾气」）——
+const FADE_ALPHA   = 3;      // 每帧盖上的黑纱透明度：越小，记忆越长
+const SPEED        = 0.012;  // 笔尖行进速度：慢，才有祷告感
+const RATIO_DRIFT  = 0.0007; // 频率比漂移速度：极缓，几乎察觉不到
+const PEN_GLOW     = 90;     // 笔尖光晕半径
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(Math.min(2, displayDensity()));
+  trail = createGraphics(width, height);
+  trail.pixelDensity(Math.min(2, displayDensity()));
+  trail.background(0);
+  strokeCap(ROUND);
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  const old = trail;
+  trail = createGraphics(width, height);
+  trail.pixelDensity(old.pixelDensity());
+  trail.background(0);
+  trail.image(old, 0, 0, width, height);  // 旧的记忆随窗口缩放延续
+  old.remove();
+  prev = null;
+}
+
+// 频率比：围绕黄金分割附近缓慢游荡，偶尔掠过简单整数比
+function freqX(time) { return 3 + Math.sin(time * RATIO_DRIFT) * 0.6; }
+function freqY(time) { return 2 + Math.cos(time * RATIO_DRIFT * 0.83) * 0.6; }
+
+// 利萨茹：x = A·sin(fx·t + δ),  y = B·sin(fy·t)
+function penPosition(time) {
+  const margin = Math.min(width, height) * 0.16;
+  const A = width  / 2 - margin;
+  const B = height / 2 - margin - height * 0.04; // 给底部标题留出呼吸的空间
+  const delta = Math.PI / 2 + Math.sin(time * RATIO_DRIFT * 0.31) * 0.5;
+  return {
+    x: width  / 2 + A * Math.sin(freqX(time) * time + delta),
+    y: height / 2 + B * Math.sin(freqY(time) * time)
+  };
+}
+
+function draw() {
+  background(0);
+
+  // 1. 给记忆蒙上一层极薄的黑暗 —— 轨迹不消失，只是变淡
+  trail.noStroke();
+  trail.fill(0, FADE_ALPHA);
+  trail.rect(0, 0, width, height);
+
+  // 2. 笔尖向前走一小段，在离屏画布上留下金色
+  t += SPEED;
+  const p = penPosition(t);
+  if (prev) {
+    // 微弱地随相位呼吸的亮度
+    const breathe = 0.75 + 0.25 * Math.sin(t * 0.4);
+    trail.stroke(GOLD[0] * breathe, GOLD[1] * breathe, GOLD[2] * breathe, 220);
+    trail.strokeWeight(1.4);
+    trail.line(prev.x, prev.y, p.x, p.y);
+  }
+  prev = p;
+
+  // 3. 呈现记忆
+  image(trail, 0, 0);
+
+  // 4. 笔尖的光晕：此刻的「现在」，神圣来自它终将淡去
+  drawGlow(p.x, p.y);
+}
+
+function drawGlow(x, y) {
+  const ctx = drawingContext;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, PEN_GLOW);
+  g.addColorStop(0,   'rgba(255, 230, 160, 0.9)');
+  g.addColorStop(0.15,'rgba(212, 175, 105, 0.35)');
+  g.addColorStop(1,   'rgba(212, 175, 105, 0)');
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';  // 叠加发光
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, PEN_GLOW, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 光晕中心一个锐利的亮核
+  noStroke();
+  fill(255, 240, 200, 230);
+  circle(x, y, 3.5);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一即一切 · 一切即一</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<style>
+  html, body { margin:0; padding:0; background:#000; overflow:hidden; height:100%; }
+  canvas { display:block; }
+
+  .serif { font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; font-weight:300; }
+
+  /* 固定标题 */
+  #title {
+    position:fixed; left:0; right:0; bottom:5vh; text-align:center; pointer-events:none;
+    color:rgba(212,175,105,0.7); font-size:clamp(14px,1.6vw,20px);
+    letter-spacing:1.1em; text-indent:1.1em;
+  }
+  #title small {
+    display:block; margin-top:1.2em; font-size:0.55em; letter-spacing:0.45em; text-indent:0.45em;
+    color:rgba(212,175,105,0.3); font-family:Georgia,serif; font-style:italic;
+  }
+
+  /* 章节大字：一 / 一即一切 / 一切即一 */
+  #chapter {
+    position:fixed; left:0; right:0; top:12vh; text-align:center; pointer-events:none;
+    color:rgba(232,200,140,0); font-size:clamp(30px,4.5vw,58px);
+    letter-spacing:0.7em; text-indent:0.7em;
+    transition:color 2.2s ease, text-shadow 2.2s ease;
+    text-shadow:0 0 40px rgba(212,175,105,0);
+  }
+  #chapter.lit {
+    color:rgba(232,200,140,0.88);
+    text-shadow:0 0 60px rgba(212,175,105,0.35);
+  }
+
+  /* 开始的门 */
+  #gate {
+    position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; cursor:pointer;
+    background:#000; z-index:10; transition:opacity 1.8s ease;
+  }
+  #gate.hide { opacity:0; pointer-events:none; }
+  #gate .big { color:rgba(232,200,140,0.9); font-size:clamp(22px,3vw,36px);
+    letter-spacing:0.8em; text-indent:0.8em; animation:breathe 3.5s ease-in-out infinite; }
+  #gate .sub { margin-top:3em; color:rgba(200,170,120,0.35); font-size:13px;
+    letter-spacing:0.4em; text-indent:0.4em; }
+  @keyframes breathe { 0%,100%{opacity:0.55} 50%{opacity:1} }
+
+  #hint {
+    position:fixed; right:2.2vw; bottom:3.5vh; pointer-events:none;
+    color:rgba(200,170,120,0.28); font-size:11px; letter-spacing:0.3em;
+    font-family:"Songti SC","SimSun",serif;
+  }
+  #vignette { position:fixed; inset:0; pointer-events:none;
+    background:radial-gradient(ellipse at center, transparent 52%, rgba(0,0,0,0.6) 100%); }
+</style>
+</head>
+<body>
+
+<div id="gate" class="serif">
+  <div class="big">一 即 一 切</div>
+  <div class="sub">点 击 进 入 · 声 音 将 起</div>
+</div>
+<div id="chapter" class="serif"></div>
+<div id="title" class="serif">一即一切 · 一切即一<small>one is all &nbsp;·&nbsp; all is one</small></div>
+<div id="hint">拖入任意音频文件，画面将随你的音乐呼吸</div>
+<div id="vignette"></div>
+
+<script>
+/* ============================================================
+ * 一即一切，一切即一
+ *
+ * 哲学骨架：一千个粒子全部是同一条参数曲线的采样，
+ * 共享同一个全局相位 phase —— 万物是一根线的千种表达。
+ *
+ * 叙事循环：GATHER(万归一) → EMANATE(一生万) →
+ *           DANCE(曼陀罗显现) → SHATTER(秩序崩解) → RETURN ↺
+ *
+ * 节奏引擎：Web Audio 合成 122BPM 四四拍（零音频文件），
+ * 或拖入任意音频文件；FFT 分频段驱动：
+ *   底鼓 → 径向脉冲   军鼓 → 旋转踢   hat → 火花
+ * ============================================================ */
+
+// ---------- 视觉常量 ----------
+const N = 1000;                 // 粒子数 = 曲线的采样数
+const GOLD = [212,175,105], WHITE=[255,240,210], VERMILION=[235,110,70];
+let trail;
+let particles = [];
+let phase = 0, rotVel = 0;      // 全局相位（唯一的"一"）与旋转冲量
+let pulse = 0;                  // 底鼓脉冲，逐帧衰减
+let cohesion = 1;               // 0=自由粒子 …… 1=归于一曲线
+let gather = 0;                 // 0=展开 …… 1=坍缩为中心一珠
+let k1 = 3, k2 = 5;             // 曲线谐波数 —— 整数比时曼陀罗闭合
+let kT1 = 3, kT2 = 5;           // 谐波目标（每章变化）
+const HARMONICS = [[3,5],[4,7],[5,8],[6,11],[5,7],[7,12]];
+let chapterIdx = 0;
+
+// ---------- 叙事状态机 ----------
+const SCRIPT = [
+  { name:'GATHER',  dur: 7,  text:'一',                         },  // 万点坍缩为一珠
+  { name:'EMANATE', dur: 7,  text:'一 即 一 切',                },  // 一珠绽开为千尘
+  { name:'DANCE',   dur:16,  text:'',                           },  // 曼陀罗随节奏起舞
+  { name:'SHATTER', dur: 8,  text:'',                           },  // 崩解为自由粒子
+  { name:'RETURN',  dur: 9,  text:'一 切 即 一',                },  // 螺旋归一
+];
+let stateIdx = 0, stateT = 0;   // stateT: 本章已进行秒数
+
+// ---------- 音频 ----------
+let actx, analyser, freqData, masterGain, synthGain, synthOn=false;
+let sBass=0, sMid=0, sHigh=0, avgBass=0.2, lastBeat=0;
+
+function initAudio() {
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.55;
+  freqData = new Uint8Array(analyser.frequencyBinCount);
+  masterGain = actx.createGain(); masterGain.gain.value = 0.85;
+  masterGain.connect(analyser); analyser.connect(actx.destination);
+  startSynth();
+}
+
+// —— 内置合成：122 BPM，kick / snare / hat / bass，纯代码鼓机 ——
+let bpm=122, step=0, nextNote=0, schedTimer=null;
+function startSynth() {
+  synthGain = actx.createGain(); synthGain.gain.value = 0.9;
+  synthGain.connect(masterGain);
+  synthOn = true; nextNote = actx.currentTime + 0.1;
+  schedTimer = setInterval(()=>{
+    if(!synthOn) return;
+    while (nextNote < actx.currentTime + 0.12) {
+      scheduleStep(step, nextNote);
+      nextNote += 60/bpm/2; step = (step+1)%32;
+    }
+  }, 30);
+}
+function noiseBuf() {
+  const b = actx.createBuffer(1, actx.sampleRate*0.3, actx.sampleRate);
+  const d = b.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+  return b;
+}
+let _noise=null;
+function kick(t) {
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.frequency.setValueAtTime(160,t); o.frequency.exponentialRampToValueAtTime(42,t+0.11);
+  g.gain.setValueAtTime(1.0,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.28);
+  o.connect(g).connect(synthGain); o.start(t); o.stop(t+0.3);
+}
+function snare(t) {
+  const s=actx.createBufferSource(); s.buffer=_noise;
+  const f=actx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1900; f.Q.value=0.8;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.5,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.16);
+  s.connect(f).connect(g).connect(synthGain); s.start(t); s.stop(t+0.2);
+}
+function hat(t) {
+  const s=actx.createBufferSource(); s.buffer=_noise;
+  const f=actx.createBiquadFilter(); f.type='highpass'; f.frequency.value=7500;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.22,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.05);
+  s.connect(f).connect(g).connect(synthGain); s.start(t); s.stop(t+0.06);
+}
+function bass(t, semis) {
+  const o=actx.createOscillator(); o.type='sawtooth';
+  o.frequency.value = 55*Math.pow(2,semis/12);
+  const f=actx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=320; f.Q.value=4;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.34,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.24);
+  o.connect(f).connect(g).connect(synthGain); o.start(t); o.stop(t+0.26);
+}
+const BASSLINE = [0,0,3,0, 0,0,5,3];
+function scheduleStep(s, t) {
+  if (s%4===0) kick(t);                       // 四四底鼓
+  if (s===30) kick(t);                        // 第二小节末尾加一脚
+  if (s%16===4 || s%16===12) snare(t);        // 军鼓 2 & 4
+  if (s%4===2) hat(t);                        // 反拍 hat
+  if (s%4===0) bass(t, BASSLINE[(s/4)|0]);    // 贝斯跟底鼓
+}
+
+// —— 拖入自己的音乐 ——
+window.addEventListener('dragover', e=>e.preventDefault());
+window.addEventListener('drop', e=>{
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if(!f || !/^audio\//.test(f.type)) return;
+  synthOn = false; if(schedTimer) clearInterval(schedTimer);
+  const el = new Audio(); el.src = URL.createObjectURL(f); el.loop = true;
+  const src = actx.createMediaElementSource(el);
+  src.connect(masterGain); el.play();
+});
+
+// —— FFT 频段能量 + 自适应节拍检测 ——
+function analyseAudio() {
+  if(!analyser) return;
+  analyser.getByteFrequencyData(freqData);
+  const avg=(a,b)=>{let s=0;for(let i=a;i<b;i++)s+=freqData[i];return s/((b-a)*255);};
+  const bass=avg(1,9), mid=avg(24,90), high=avg(220,520);
+  sBass=lerp(sBass,bass,0.55); sMid=lerp(sMid,mid,0.4); sHigh=lerp(sHigh,high,0.4);
+  avgBass=lerp(avgBass,bass,0.04);
+  const now=performance.now();
+  if (bass>Math.max(avgBass*1.32,0.22) && now-lastBeat>140) {
+    lastBeat=now; onBeat(constrain(bass*1.6,0.3,1.4));
+  }
+  if (sHigh>0.16 && Math.random()<0.3) sparkle();
+}
+function onBeat(strength) {
+  pulse = Math.min(1.2, pulse + strength);
+  rotVel += 0.012 * strength;                                   // 节拍踢一脚旋转
+  if (state()==='SHATTER') {                                    // 崩解章：径向爆炸
+    const cx=width/2, cy=height/2;
+    for (const p of particles) {
+      const dx=p.fx-cx, dy=p.fy-cy, d=Math.hypot(dx,dy)||1;
+      const k = (2.5+Math.random()*4.5)*strength;
+      p.vx += dx/d*k; p.vy += dy/d*k;
+    }
+  }
+}
+function sparkle() {
+  const p = particles[(Math.random()*N)|0];
+  if (p) p.flash = 1;
+}
+
+// ---------- p5 主体 ----------
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(Math.min(2, displayDensity()));
+  trail = createGraphics(width,height); trail.pixelDensity(pixelDensity()); trail.background(0);
+  const cx=width/2, cy=height/2;
+  for(let i=0;i<N;i++) particles.push({fx:cx,fy:cy,vx:0,vy:0,flash:0});
+  textFont('serif');
+  document.getElementById('gate').addEventListener('click', function(){
+    initAudio(); this.classList.add('hide');
+  }, {once:true});
+}
+function windowResized() {
+  resizeCanvas(windowWidth,windowHeight);
+  const old=trail;
+  trail=createGraphics(width,height); trail.pixelDensity(old.pixelDensity());
+  trail.background(0); trail.image(old,0,0,width,height); old.remove();
+}
+
+const state = ()=>SCRIPT[stateIdx].name;
+
+// 第 i 个粒子在「那条唯一的曲线」上的位置 —— 一切即一的数学形态
+function curvePos(i) {
+  const th = i/N*TWO_PI + phase;
+  const R = Math.min(width,height)*0.34;
+  const r = R*(0.58 + 0.26*Math.sin(k1*th + phase*1.31)
+                   + 0.18*Math.sin(k2*th - phase*0.72))
+          * (1 + 0.16*pulse);
+  return { x: width/2 + r*Math.cos(th), y: height/2 + r*Math.sin(th) };
+}
+
+function draw() {
+  background(0);
+
+  // —— 叙事推进 ——
+  stateT += deltaTime/1000;
+  const ch = SCRIPT[stateIdx];
+  if (stateT >= ch.dur) {
+    stateIdx = (stateIdx+1)%SCRIPT.length; stateT = 0;
+    if (state()==='DANCE') { chapterIdx++; [kT1,kT2]=HARMONICS[chapterIdx%HARMONICS.length]; }
+    updateChapterText();
+  }
+  // 状态 → 两个全局内聚参数的缓动目标
+  let cT, gT;
+  switch(state()) {
+    case 'GATHER':  cT=1; gT=1; break;
+    case 'EMANATE': cT=1; gT=0; break;
+    case 'DANCE':   cT=1; gT=0; break;
+    case 'SHATTER': cT=0; gT=0; break;
+    case 'RETURN':  cT=1; gT = stateT > SCRIPT[stateIdx].dur-3 ? 1 : 0; break;
+  }
+  cohesion = lerp(cohesion, cT, 0.045);
+  gather   = lerp(gather,   gT, 0.05);
+
+  // 谐波数缓动：整数比 → 曼陀罗闭合（秩序显现），偏离 → 散开
+  k1 = lerp(k1, kT1 + (state()==='DANCE'?0:0.4*Math.sin(phase*0.13)), 0.02);
+  k2 = lerp(k2, kT2 + (state()==='DANCE'?0:0.4*Math.cos(phase*0.11)), 0.02);
+
+  // 全局相位：唯一的心跳
+  phase += 0.0045 + rotVel + sMid*0.01;
+  rotVel *= 0.93; pulse *= 0.9;
+
+  analyseAudio();
+
+  // —— 记忆衰减：节奏要干净的舞台，淡化比上一个作品快 ——
+  trail.noStroke(); trail.fill(0, 16 + pulse*14); trail.rect(0,0,width,height);
+
+  // —— 粒子更新与绘制 ——
+  const cx=width/2, cy=height/2;
+  const pts = new Array(N);
+  for(let i=0;i<N;i++) {
+    const p = particles[i];
+    // 自由态：速度积分 + 一点弯曲的漫游场
+    p.fx += p.vx; p.fy += p.vy; p.vx *= 0.94; p.vy *= 0.94;
+    p.vx += Math.sin(p.fy*0.008 + phase)*0.03*(1-cohesion);
+    p.vy += Math.cos(p.fx*0.008 - phase)*0.03*(1-cohesion);
+    // 屏幕边缘软回弹
+    if(p.fx<20||p.fx>width-20) p.vx*=-0.8;
+    if(p.fy<20||p.fy>height-20) p.vy*=-0.8;
+    p.fx=constrain(p.fx,10,width-10); p.fy=constrain(p.fy,10,height-10);
+
+    const t = curvePos(i);
+    let x = lerp(p.fx, t.x, cohesion), y = lerp(p.fy, t.y, cohesion);
+    x = lerp(x, cx, gather); y = lerp(y, cy, gather);
+    pts[i] = {x,y,flash:p.flash};
+    p.flash *= 0.85;
+
+    // 粒子点：崩解时是火花（朱红混入），归一时是金尘
+    const free = 1-cohesion;
+    const cr = lerp(GOLD[0],VERMILION[0],free*0.7) + p.flash*80;
+    const cg = lerp(GOLD[1],VERMILION[1],free*0.7) + p.flash*80;
+    const cb = lerp(GOLD[2],VERMILION[2],free*0.7) + p.flash*60;
+    trail.noStroke();
+    trail.fill(cr,cg,cb, 70 + p.flash*160 + gather*60);
+    const sz = 1.6 + p.flash*2.5 + sHigh*1.5;
+    trail.circle(x,y,sz);
+  }
+
+  // —— 那根线：内聚时把相邻采样连起来，万物现出「一」的真身 ——
+  if (cohesion > 0.25) {
+    const a = cohesion*110;
+    trail.stroke(GOLD[0],GOLD[1],GOLD[2], a);
+    trail.strokeWeight(1.1); trail.noFill();
+    trail.beginShape();
+    for(let i=0;i<=N;i++) trail.vertex(pts[i%N].x, pts[i%N].y);
+    trail.endShape();
+  }
+
+  image(trail,0,0);
+
+  // —— 中心的「一」：永远在，随底鼓呼吸；GATHER 时它即是全部 ——
+  const coreR = (7 + pulse*26 + sBass*22) * (1 + gather*2.6);
+  drawGlow(cx, cy, coreR, 60 + coreR*3);
+}
+
+function drawGlow(x,y,core,glow) {
+  const ctx = drawingContext;
+  const g = ctx.createRadialGradient(x,y,0,x,y,glow);
+  g.addColorStop(0,'rgba(255,232,170,0.85)');
+  g.addColorStop(0.2,'rgba(212,175,105,0.30)');
+  g.addColorStop(1,'rgba(212,175,105,0)');
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,glow,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  noStroke(); fill(255,242,205,235); circle(x,y,core);
+}
+
+// 章节大字
+function updateChapterText() {
+  const el = document.getElementById('chapter');
+  const txt = SCRIPT[stateIdx].text;
+  el.classList.remove('lit');
+  if (!txt) return;
+  setTimeout(()=>{ el.textContent = txt; el.classList.add('lit'); }, 600);
+}
+updateChapterText();
+</script>
+</body>
+</html>

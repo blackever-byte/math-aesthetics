@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数与美 · 可交互的学科美感</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#000; color:#d4af69; min-height:100vh;
+    font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:8vh 6vw;
+  }
+  h1 { font-weight:300; font-size:clamp(20px,3vw,32px); letter-spacing:0.7em; text-indent:0.7em;
+       color:rgba(232,200,140,0.9); }
+  .sub { margin-top:1.6em; font-size:12px; letter-spacing:0.4em; text-indent:0.4em;
+         color:rgba(212,175,105,0.35); font-family:Georgia,serif; font-style:italic; }
+  .grid { margin-top:8vh; display:grid; gap:3.5em; width:100%; max-width:560px; }
+  a.card {
+    display:block; text-decoration:none; text-align:center;
+    border:1px solid rgba(212,175,105,0.18); padding:3.2em 2em;
+    transition:border-color .6s ease, background .6s ease;
+  }
+  a.card:hover { border-color:rgba(212,175,105,0.6); background:rgba(212,175,105,0.04); }
+  a.card .zh { font-size:clamp(18px,2.4vw,26px); letter-spacing:0.5em; text-indent:0.5em;
+               color:rgba(232,200,140,0.85); }
+  a.card .en { margin-top:1.3em; font-size:11px; letter-spacing:0.35em; text-indent:0.35em;
+               color:rgba(212,175,105,0.35); font-family:Georgia,serif; font-style:italic; }
+  a.card .tip { margin-top:1.8em; font-size:11px; letter-spacing:0.25em;
+                color:rgba(200,170,120,0.3); }
+  footer { margin-top:10vh; font-size:11px; letter-spacing:0.3em;
+           color:rgba(200,170,120,0.22); text-align:center; line-height:2.2; }
+</style>
+</head>
+<body>
+  <h1>数 与 美</h1>
+  <p class="sub">mathematics · physics · philosophy — in motion</p>
+
+  <div class="grid">
+    <a class="card" href="lissajous.html">
+      <div class="zh">秩序生于振动</div>
+      <div class="en">order arises from vibration</div>
+      <div class="tip">利萨茹曲线 · 冥想 · 无声音 · 点开即看</div>
+    </a>
+    <a class="card" href="one-is-all.html">
+      <div class="zh">一即一切 · 一切即一</div>
+      <div class="en">one is all · all is one</div>
+      <div class="tip">粒子华严 · 强音乐节奏 · 点击进入 · 可拖入自己的音乐</div>
+    </a>
+  </div>
+
+  <footer>
+    made with vibe coding — p5.js &amp; web audio<br>
+    建议横屏或大屏观看 · 戴上耳机
+  </footer>
+</body>
+</html>
