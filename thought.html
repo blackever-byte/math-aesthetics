@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>思维之美 · the beauty of thought</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<style>
+  html, body { margin:0; padding:0; background:#000; overflow:hidden; height:100%; }
+  body.playing { cursor:crosshair; }
+  canvas { display:block; }
+  .serif { font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; font-weight:300; }
+
+  #vignette { position:fixed; inset:0; pointer-events:none; z-index:4;
+    background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,0.62) 100%); }
+  #grain { position:fixed; inset:-120px; pointer-events:none; z-index:6; opacity:0.045;
+    animation:gr 0.6s steps(2) infinite; }
+  @keyframes gr { 0%{transform:translate(0,0)} 25%{transform:translate(-34px,22px)}
+    50%{transform:translate(24px,-28px)} 75%{transform:translate(-18px,-12px)} 100%{transform:translate(0,0)} }
+
+  #title { position:fixed; left:0; right:0; bottom:4.5vh; text-align:center; z-index:7;
+    pointer-events:none; color:rgba(212,175,105,0.55);
+    font-size:clamp(12px,1.3vw,16px); letter-spacing:0.9em; text-indent:0.9em; }
+  #title small { display:block; margin-top:1.2em; font-size:0.62em; letter-spacing:0.4em;
+    color:rgba(212,175,105,0.28); font-family:Georgia,serif; font-style:italic; }
+  #hint { position:fixed; right:2.2vw; bottom:4.5vh; z-index:7; pointer-events:none;
+    color:rgba(200,170,120,0.28); font-size:11px; letter-spacing:0.3em; }
+
+  #gate { position:fixed; inset:0; display:flex; flex-direction:column; z-index:20;
+    align-items:center; justify-content:center; cursor:pointer; background:#000;
+    transition:opacity 2s ease; }
+  #gate.hide { opacity:0; pointer-events:none; }
+  #gate .big { color:rgba(232,200,140,0.9); font-size:clamp(20px,2.6vw,30px);
+    letter-spacing:0.7em; text-indent:0.7em; animation:breathe 4s ease-in-out infinite; }
+  #gate .sub { margin-top:3em; color:rgba(200,170,120,0.35); font-size:12px;
+    letter-spacing:0.45em; line-height:2.4; text-align:center; }
+  @keyframes breathe { 0%,100%{opacity:0.5} 50%{opacity:1} }
+</style>
+</head>
+<body>
+
+<div id="gate" class="serif">
+  <div class="big">思 维 之 美</div>
+  <div class="sub">860 亿个这样的宇宙，正在你颅内运转<br>点 击 开 场 · 点 击 画 面 = 注 入 一 个 想 法</div>
+</div>
+<div id="title" class="serif">思维之美<small>the beauty of thought</small></div>
+<div id="hint">点击 = 注入想法 · R = 重置网络</div>
+<div id="vignette"></div><div id="grain"></div>
+
+<script>
+/* ================================================================
+ * 思维之美 —— 思考进行时的神经网络微观景观
+ *
+ * 形态：递归分叉（树突树+树突棘 / 长轴突+髓鞘+郎飞结+终扣）
+ *       三种细胞模板：锥体 / 星状 / 浦肯野（扇形树冠，视觉焦点）
+ * 电生理：积分-发放（亚阈值挣扎→AIS 爆发→不应期）、跳跃传导、
+ *         兴奋(金)/抑制(青)双脉冲、反向传播
+ * 可塑性：赫布强化（桥变粗）、突触修剪（小胶质细胞吞噬弱连接）、
+ *         树突棘发芽
+ * 背景复调：星形胶质细胞钙波（慢）× 神经脉冲（快）、
+ *           毛细血管充血（神经血管耦合）、多巴胺雾、轴突货运小火车
+ * 事件：兴奋潮(6-10s) / 神经雪崩(~20s,镜头骑乘脉冲) / 记忆印迹回放
+ * ================================================================ */
+
+const GOLD=[212,175,105], CYAN=[120,200,255], WHITE=[255,244,220];
+let t0=null;
+const now=()=>(millis()-t0)/1000;
+const dtF=()=>Math.min(0.05,deltaTime/1000);
+
+// ---------- 网络结构 ----------
+let neurons=[], syns=[], pulses=[], inPulses=[], sprays=[], microglia=[], rings=[];
+let layerBuf=[], layerDirty=[true,true,true], layerRedrawT=[0,0,0];
+const PAR=[0.45,0.7,1.0];               // 三层视差
+let cam={x:0,y:0}, chasePulse=null, chaseT=0;
+let exciteBoost=0, mist=0, mistTarget=0;
+let engram=[], engramT=-99;
+let cargoAxon=null, cargoT=[0.2,0.5,0.8], cargoDir=[1,1,-1];
+let nextWave=8, nextAval=16, nextMist=24, nextEngram=40, nextSprout=14;
+let vessels=[];
+
+// 分支：{pts,L,w,children,parent,isAxon,myelin[],boutons[],term}
+function growBranch(x,y,ang,len,depth,isAxon,spread){
+  const pts=[[x,y]]; let cxp=x,cyp=y,a=ang;
+  const steps=3+(Math.random()*3|0);
+  for(let i=0;i<steps;i++){
+    a+=(Math.random()-0.5)*0.5;
+    const l=len/steps;
+    cxp+=Math.cos(a)*l; cyp+=Math.sin(a)*l; pts.push([cxp,cyp]);
+  }
+  const b={pts,L:0,w:0.6+depth*0.55,children:[],parent:null,isAxon,
+    myelin:[],boutons:[],term:null,dflash:0};
+  b.L=polyLen(pts);
+  if(depth>0){
+    const nC = isAxon? (Math.random()<0.25?2:1) : 2;
+    for(let i=0;i<nC;i++){
+      const na=a+(i===0?-1:1)*(spread||0.45)*(0.6+Math.random()*0.8);
+      const child=growBranch(cxp,cyp,na,len*0.72,depth-1,isAxon,spread);
+      child.parent=b; b.children.push(child);
+    }
+  }
+  return b;
+}
+function polyLen(p){ let L=0;
+  for(let i=0;i<p.length-1;i++) L+=Math.hypot(p[i+1][0]-p[i][0],p[i+1][1]-p[i][1]);
+  return L; }
+function branchPoint(b,d){
+  const p=b.pts; let acc=0;
+  for(let i=0;i<p.length-1;i++){
+    const l=Math.hypot(p[i+1][0]-p[i][0],p[i+1][1]-p[i][1]);
+    if(acc+l>=d && l>0){ const k=(d-acc)/l;
+      return [p[i][0]+(p[i+1][0]-p[i][0])*k, p[i][1]+(p[i+1][1]-p[i][1])*k]; }
+    acc+=l; }
+  return p[p.length-1];
+}
+
+// 轴突：朝目标神经元转向生长 + 髓鞘分段 + 终扣
+function growAxon(n,target){
+  const tx=target.x, ty=target.y;
+  let a=Math.atan2(ty-n.y,tx-n.x)+(Math.random()-0.5)*0.8;
+  let x=n.x,y=n.y; const pts=[[x,y]];
+  while(Math.hypot(tx-x,ty-y)>40 && pts.length<60){
+    const want=Math.atan2(ty-y,tx-x);
+    a+=Math.atan2(Math.sin(want-a),Math.cos(want-a))*0.18+(Math.random()-0.5)*0.35;
+    x+=Math.cos(a)*16; y+=Math.sin(a)*16; pts.push([x,y]);
+  }
+  const b={pts,L:polyLen(pts),w:1.4,children:[],parent:null,isAxon:true,
+    myelin:[],boutons:[],term:null,dflash:0};
+  // 髓鞘：覆盖 55px / 郎飞结断口 16px
+  for(let d=b.L*0.15;d<b.L*0.85;d+=71) b.myelin.push([d,Math.min(d+55,b.L*0.9)]);
+  // 终扣：末段等距珠点
+  for(let d=b.L*0.6;d<b.L-8;d+=34) b.boutons.push(d);
+  return b;
+}
+function inMyelin(b,d){
+  for(const m of b.myelin) if(d>=m[0]&&d<=m[1]) return true;
+  return false;
+}
+
+function buildNetwork(){
+  neurons=[]; syns=[]; pulses=[]; inPulses=[]; sprays=[]; microglia=[]; rings=[];
+  // 40 个神经元，网格抖动铺开，三层景深
+  const cols=8, rows=5;
+  let idx=0;
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    const layer=[0,1,1,2][Math.random()*4|0];
+    const x=(c+0.5)/cols*width + (Math.random()-0.5)*width/cols*0.8;
+    const y=(r+0.5)/rows*height + (Math.random()-0.5)*height/rows*0.8;
+    const type = idx===17 ? 'purk' : (Math.random()<0.3?'star':'pyr');
+    const n={x,y, layer, type, inhib:Math.random()<0.2,
+      r: type==='purk'?16: 7+Math.random()*7,
+      pot:0, ref:0, flash:0, dend:[], axon:null, dendFlash:0};
+    if(type==='purk'){                       // 浦肯野：扇形树冠
+      for(let k=0;k<7;k++){
+        const a=-PI/2 + (k/6-0.5)*1.9;
+        n.dend.push(growBranch(x,y-10,a,42+Math.random()*18,3,false,0.28));
+      }
+    } else {
+      const nd=3+(Math.random()*3|0);
+      for(let k=0;k<nd;k++)
+        n.dend.push(growBranch(x,y,Math.random()*TWO_PI,24+Math.random()*14,3,false));
+    }
+    neurons.push(n); idx++;
+  }
+  // 轴突 + 突触
+  for(const n of neurons){
+    let target, tries=0;
+    do { target=neurons[(Math.random()*neurons.length)|0]; tries++; }
+    while((target===n || dist(n.x,n.y,target.x,target.y)<120) && tries<20);
+    n.axon=growAxon(n,target);
+    // 突触落点：目标神经元某条树突的中段
+    const db=target.dend[(Math.random()*target.dend.length)|0];
+    const tp=branchPoint(db, db.L*(0.4+Math.random()*0.4));
+    const syn={from:n, to:target, axon:n.axon, dendBr:db,
+      tp, strength:0.5+Math.random()*0.3, lastUse:-99, recT:-99, dead:0};
+    n.axon.term=syn; syns.push(syn);
+  }
+  // 小胶质细胞 ×3
+  for(let i=0;i<3;i++){
+    const mg={x:random(width),y:random(height),a:random(TWO_PI),target:null,branches:[]};
+    for(let k=0;k<5;k++)
+      mg.branches.push(growBranch(0,0,k/5*TWO_PI,10+Math.random()*8,2,false));
+    microglia.push(mg);
+  }
+  // 毛细血管 ×3
+  for(let i=0;i<3;i++){
+    const x0=random(width*0.1,width*0.5), y0=random(height*0.15,height*0.85);
+    vessels.push({p:[ [x0,y0],[x0+random(150,300),y0+random(-80,80)],
+      [x0+random(250,450),y0+random(-60,60)],[x0+random(420,640),y0+random(-90,90)] ],glow:0});
+  }
+  // 记忆印迹：随机 6 个神经元
+  for(let i=0;i<6;i++) engram.push(neurons[(Math.random()*neurons.length)|0]);
+  // 货运小火车：选最长轴突
+  cargoAxon=neurons.reduce((a,b)=>a.axon.L>b.axon.L?a:b).axon;
+  layerBuf=[0,1,2].map(()=>{ const g=createGraphics(width,height);
+    g.pixelDensity(pixelDensity()); return g; });
+  layerDirty=[true,true,true];
+}
+
+// ---------- 放电与脉冲 ----------
+function fireNeuron(n){
+  n.flash=1; n.pot=0; n.ref=1.1; n.dendFlash=1;      // 反向传播闪回树突
+  if(pulses.length<46)
+    pulses.push({n, b:n.axon, d:0, inhib:n.inhib, trail:[], speed:185});
+}
+function fireSynapse(syn){
+  const el=now();
+  syn.strength=Math.min(1,syn.strength+0.12);        // 赫布强化
+  syn.lastUse=el; syn.recT=el;
+  layerDirty[syn.from.layer]=true;
+  // 递质小泡喷雾
+  const end=syn.axon.pts[syn.axon.pts.length-1];
+  const ta=Math.atan2(syn.tp[1]-end[1],syn.tp[0]-end[0]);
+  for(let k=0;k<10;k++){ const a=ta+(Math.random()-0.5)*0.9;
+    sprays.push({x:end[0],y:end[1],vx:Math.cos(a)*(30+Math.random()*50),
+      vy:Math.sin(a)*(30+Math.random()*50),life:1}); }
+  // 树突内向脉冲 → 胞体蓄能
+  inPulses.push({n:syn.to, b:syn.dendBr,
+    d:syn.dendBr.L*0.6, inhib:syn.from.inhib, trail:[], speed:60});
+  if(tickBudget>0){ tickBudget--; tick(0.1+syn.strength*0.08); }
+}
+function addInput(n,amount,inhib){
+  if(n.ref>0) return;
+  n.pot = inhib? Math.max(0,n.pot-0.3) : n.pot+amount;
+  if(n.pot>=1) fireNeuron(n);
+}
+
+// ---------- 声音 ----------
+let actx, master, droneGain, delaySend, tickBudget=0, nextHB=2;
+function initAudio(){
+  actx=new (window.AudioContext||window.webkitAudioContext)();
+  master=actx.createGain(); master.gain.value=0.8; master.connect(actx.destination);
+  const dly=actx.createDelay(1); dly.delayTime.value=0.31;
+  const fb=actx.createGain(); fb.gain.value=0.36;
+  const wet=actx.createGain(); wet.gain.value=0.18;
+  delaySend=actx.createGain(); delaySend.connect(dly); dly.connect(fb);
+  fb.connect(dly); dly.connect(wet); wet.connect(master);
+  droneGain=actx.createGain(); droneGain.gain.value=0.05;
+  const lp=actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=200;
+  for(const f of [49,73.42]){ const o=actx.createOscillator(); o.type='sine';
+    o.frequency.value=f; o.connect(droneGain); o.start(); }
+  droneGain.connect(lp); lp.connect(master);
+}
+const _nb={};
+function noiseBuf(sec){ if(_nb[sec])return _nb[sec];
+  const b=actx.createBuffer(1,actx.sampleRate*sec,actx.sampleRate),d=b.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1; return _nb[sec]=b; }
+function tick(v){ const t=actx.currentTime;
+  const s=actx.createBufferSource(); s.buffer=noiseBuf(0.05);
+  const f=actx.createBiquadFilter(); f.type='highpass'; f.frequency.value=3200;
+  const g=actx.createGain(); g.gain.setValueAtTime(v,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.045);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+0.05); }
+function pluck(f,v){ const t=actx.currentTime;
+  const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(v,t+0.02); g.gain.exponentialRampToValueAtTime(0.001,t+0.8);
+  o.connect(g); g.connect(master); g.connect(delaySend); o.start(t); o.stop(t+0.85); }
+function sweepUp(){ const t=actx.currentTime;
+  const s=actx.createBufferSource(); s.buffer=noiseBuf(1.2);
+  const f=actx.createBiquadFilter(); f.type='bandpass'; f.Q.value=1.5;
+  f.frequency.setValueAtTime(500,t); f.frequency.exponentialRampToValueAtTime(4000,t+1.1);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.14,t+1.1); g.gain.exponentialRampToValueAtTime(0.001,t+1.2);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+1.3); }
+function downChord(){ for(const f of [392,329.63,261.63]) pluck(f,0.07); }
+function heartbeat(){ const t=actx.currentTime;
+  const o=actx.createOscillator(),g=actx.createGain();
+  o.frequency.setValueAtTime(95,t); o.frequency.exponentialRampToValueAtTime(42,t+0.1);
+  g.gain.setValueAtTime(0.22,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.22);
+  o.connect(g).connect(master); o.start(t); o.stop(t+0.25); }
+
+// ---------- 事件引擎 ----------
+function events(el,dt){
+  tickBudget=3;
+  exciteBoost=Math.max(0,exciteBoost-dt);
+  // 背景自发活动
+  if(Math.random()<0.08){ const n=neurons[(Math.random()*neurons.length)|0];
+    addInput(n,0.12*(exciteBoost>0?3:1),false); }
+  // 兴奋潮：带状扫过
+  if(el>nextWave){ nextWave=el+6+Math.random()*4;
+    const x0=random(width);
+    for(const n of neurons) if(Math.abs(n.x-x0)<180) addInput(n,0.55,false);
+    for(let k=0;k<3;k++) pluck(220*Math.pow(1.25,(Math.random()*5|0)),0.03); }
+  // 神经雪崩 + 镜头骑乘
+  if(el>nextAval){ nextAval=el+16+Math.random()*9;
+    exciteBoost=2.2; sweepUp();
+    for(let k=0;k<5;k++) fireNeuron(neurons[(Math.random()*neurons.length)|0]);
+    if(pulses.length){ chasePulse=pulses[(Math.random()*pulses.length)|0]; chaseT=el+1.6; } }
+  // 多巴胺雾
+  if(el>nextMist){ nextMist=el+22+Math.random()*14; mistTarget=0.11;
+    setTimeout(()=>mistTarget=0, 3200); downChord(); }
+  mist=lerp(mist,mistTarget,0.02);
+  // 记忆印迹回放
+  if(el>nextEngram){ nextEngram=el+38+Math.random()*16; engramT=el; }
+  // 树突棘发芽
+  if(el>nextSprout){ nextSprout=el+26+Math.random()*10;
+    const n=neurons[(Math.random()*neurons.length)|0];
+    n.dend.push(growBranch(n.x,n.y,Math.random()*TWO_PI,14,1,false));
+    layerDirty[n.layer]=true; }
+  // 突触衰减 + 小胶质细胞修剪
+  for(const s of syns){ if(!s.dead && el-s.lastUse>16)
+    s.strength=Math.max(0,s.strength-dt*0.01); }
+  for(const mg of microglia){
+    if(!mg.target){
+      const weak=syns.find(s=>!s.dead && s.strength<0.2 && el-s.lastUse>20);
+      if(weak) mg.target=weak;
+      mg.a+=(Math.random()-0.5)*0.3;
+      mg.x+=Math.cos(mg.a)*0.5; mg.y+=Math.sin(mg.a)*0.5;
+    } else {
+      const s=mg.target;
+      if(s.dead){ mg.target=null; continue; }
+      const end=s.axon.pts[s.axon.pts.length-1];
+      const dx=end[0]-mg.x, dy=end[1]-mg.y, d=Math.hypot(dx,dy);
+      if(d<14){ s.dead=1; layerDirty[s.from.layer]=true; mg.target=null; }
+      else { mg.x+=dx/d*0.9; mg.y+=dy/d*0.9; }
+    }
+    mg.x=constrain(mg.x,0,width); mg.y=constrain(mg.y,0,height);
+  }
+  // 心跳底鼓（不规则）
+  if(el>nextHB){ nextHB=el+0.85+Math.random()*0.3; heartbeat(); }
+}
+
+// ---------- 绘制 ----------
+function setup(){
+  createCanvas(windowWidth,windowHeight);
+  pixelDensity(Math.min(2,displayDensity()));
+  textFont('serif'); buildNetwork(); makeGrain();
+  document.getElementById('gate').addEventListener('click',function(){
+    initAudio(); t0=millis(); this.classList.add('hide');
+    document.body.classList.add('playing');
+  },{once:true});
+  window.addEventListener('keydown',e=>{ if(e.key==='r'||e.key==='R') location.reload(); });
+  window.addEventListener('mousedown',e=>{
+    if(t0===null||e.target.closest('#gate')) return;
+    // 注入一个想法：最近胞体爆发 + 邻近溅射
+    let best=null,bd=1e9;
+    for(const n of neurons){ const d=dist(mouseX,mouseY,n.x,n.y);
+      if(d<bd){bd=d;best=n;} }
+    if(best){ fireNeuron(best);
+      for(const n of neurons) if(dist(n.x,n.y,best.x,best.y)<220) addInput(n,0.45,false);
+      exciteBoost=Math.max(exciteBoost,0.8); }
+  });
+}
+function makeGrain(){
+  const c=document.createElement('canvas'); c.width=c.height=220;
+  const x=c.getContext('2d'), img=x.createImageData(220,220);
+  for(let i=0;i<img.data.length;i+=4){ const v=(Math.random()*255)|0;
+    img.data[i]=img.data[i+1]=img.data[i+2]=v; img.data[i+3]=255; }
+  x.putImageData(img,0,0);
+  document.getElementById('grain').style.background=`url(${c.toDataURL()})`;
+}
+
+// 静态层缓冲：胞体+核、树突+棘、轴突+髓鞘+终扣、突触强度
+function redrawLayer(li){
+  const g=layerBuf[li], depthA=[0.28,0.6,1][li];
+  g.clear(); g.noFill();
+  for(const n of neurons){
+    if(n.layer!==li) continue;
+    const drawBr=(b)=>{
+      g.stroke(GOLD[0],GOLD[1],GOLD[2], depthA*(b.isAxon?90:70));
+      g.strokeWeight(b.w*depthA+0.4);
+      g.noFill(); g.beginShape();
+      for(const p of b.pts) g.vertex(p[0],p[1]);
+      g.endShape();
+      if(!b.isAxon){                      // 树突棘
+        g.strokeWeight(0.7); g.stroke(GOLD[0],GOLD[1],GOLD[2],depthA*60);
+        for(let d=6;d<b.L-4;d+=7){ const [x,y]=branchPoint(b,d);
+          const [x2,y2]=branchPoint(b,d+2);
+          const nx=-(y2-y), ny=(x2-x), nl=Math.hypot(nx,ny)||1;
+          g.line(x,y,x+nx/nl*3.2,y+ny/nl*3.2); }
+      } else {                            // 髓鞘节段
+        g.stroke(230,205,150,depthA*130); g.strokeWeight(2.6);
+        for(const m of b.myelin){
+          g.beginShape();
+          for(let d=m[0];d<=m[1];d+=6){ const [x,y]=branchPoint(b,d); g.vertex(x,y); }
+          g.endShape(); }
+        g.noStroke(); g.fill(255,235,190,depthA*120);   // 终扣
+        for(const d of b.boutons){ const [x,y]=branchPoint(b,d); g.circle(x,y,3); }
+        if(b.term && !b.term.dead){       // 突触末梢：强度=亮度
+          const end=b.pts[b.pts.length-1];
+          g.fill(GOLD[0],GOLD[1],GOLD[2], depthA*(60+b.term.strength*180));
+          g.circle(end[0],end[1], 3+b.term.strength*4); }
+      }
+      for(const c of b.children) drawBr(c);
+    };
+    for(const db of n.dend) drawBr(db);
+    drawBr(n.axon);
+    // 胞体 + 核
+    g.noStroke(); g.fill(GOLD[0],GOLD[1],GOLD[2],depthA*46); g.circle(n.x,n.y,n.r*2.4);
+    g.fill(GOLD[0],GOLD[1],GOLD[2],depthA*120); g.circle(n.x,n.y,n.r*1.4);
+    g.fill(0,depthA*90); g.circle(n.x,n.y,n.r*0.7);
+  }
+}
+
+function draw(){
+  background(2,3,5);
+  if(t0===null) return;
+  const el=now(), dt=dtF();
+  events(el,dt);
+
+  // 摄像机：慢漂移 + 雪崩骑乘
+  let tx=Math.sin(el*0.05)*26, ty=Math.cos(el*0.037)*20;
+  if(chasePulse && el<chaseT && pulses.includes(chasePulse)){
+    const [px,py]=branchPoint(chasePulse.b,chasePulse.d);
+    tx=width/2-px; ty=height/2-py;
+  } else chasePulse=null;
+  cam.x=lerp(cam.x,tx,0.04); cam.y=lerp(cam.y,ty,0.04);
+
+  // 层缓冲（节流重绘）
+  for(let li=0;li<3;li++){
+    if(layerDirty[li] && el>layerRedrawT[li]){
+      redrawLayer(li); layerDirty[li]=false; layerRedrawT[li]=el+0.4; }
+    image(layerBuf[li], cam.x*PAR[li], cam.y*PAR[li]);
+  }
+
+  // 钙波（背景慢波）
+  if(Math.random()<0.006) rings.push({x:random(width),y:random(height),r:0});
+  noFill();
+  for(const rg of rings){ rg.r+=dt*26;
+    stroke(190,170,120, Math.max(0,40-rg.r*0.28)); strokeWeight(1);
+    circle(rg.x+cam.x*0.45, rg.y+cam.y*0.45, rg.r*2); }
+  rings=rings.filter(rg=>rg.r<150);
+
+  // 毛细血管充血
+  for(const v of vessels){
+    let near=0;
+    for(const p of pulses){ const [px,py]=branchPoint(p.b,p.d);
+      if(dist(px,py,v.p[1][0],v.p[1][1])<200) near++; }
+    v.glow=lerp(v.glow,Math.min(1,near*0.25),0.03);
+    if(v.glow>0.02){
+      stroke(255,120,90, v.glow*70); strokeWeight(2.5); noFill();
+      bezier(v.p[0][0],v.p[0][1], v.p[1][0],v.p[1][1],
+             v.p[2][0],v.p[2][1], v.p[3][0],v.p[3][1]); }
+  }
+
+  // 记忆印迹
+  if(el-engramT<1.6){ noFill(); stroke(255,220,150,(1.6-(el-engramT))/1.6*130);
+    strokeWeight(1.2);
+    for(const n of engram) circle(n.x+cam.x*PAR[n.layer],n.y+cam.y*PAR[n.layer],n.r*4); }
+
+  // 神经元动态：电位闪烁 / 发放闪光 / 树突反传
+  for(const n of neurons){
+    const ox=cam.x*PAR[n.layer], oy=cam.y*PAR[n.layer];
+    n.flash*=0.9; n.dendFlash*=0.92; n.ref=Math.max(0,n.ref-dt);
+    const flick = n.pot*(0.5+0.5*Math.sin(el*22+n.x));   // 亚阈值挣扎
+    const a = flick*90 + n.flash*180;
+    if(a>4){ const c=n.inhib?CYAN:WHITE;
+      drawGlow(n.x+ox,n.y+oy, n.r*0.8, n.r*3.2, Math.min(230,a), c); }
+    if(n.dendFlash>0.1){                                  // 反传：树突树亮一下
+      stroke(GOLD[0],GOLD[1],GOLD[2], n.dendFlash*70); strokeWeight(1); noFill();
+      const flashBr=(b)=>{
+        beginShape(); for(const p of b.pts) vertex(p[0]+ox,p[1]+oy); endShape();
+        for(const c of b.children) flashBr(c); };
+      for(const db of n.dend) flashBr(db); }
+  }
+
+  // 轴突脉冲（白核金尾，髓鞘跳跃）
+  for(const p of pulses){
+    const my=inMyelin(p.b,p.d);
+    p.d += p.speed*dt*(my?4:1)*(exciteBoost>0?1.3:1);
+    const [x,y]=branchPoint(p.b,p.d);
+    p.trail.push([x,y]); if(p.trail.length>7) p.trail.shift();
+    const ox=cam.x*PAR[p.n.layer], oy=cam.y*PAR[p.n.layer];
+    const c=p.inhib?CYAN:WHITE;
+    for(let i=1;i<p.trail.length;i++){
+      stroke(c[0],c[1],c[2], i/p.trail.length*120*(p.inhib?0.8:1));
+      strokeWeight(1.6);
+      line(p.trail[i-1][0]+ox,p.trail[i-1][1]+oy,p.trail[i][0]+ox,p.trail[i][1]+oy); }
+    drawGlow(x+ox,y+oy, 3, 22, 230, c);
+    if(my && Math.random()<0.1){ noStroke(); fill(255,240,200,60); circle(x+ox,y+oy,8); }
+  }
+  // 脉冲到达末端
+  pulses=pulses.filter(p=>{
+    if(p.d<p.b.L) return true;
+    if(p.b.term && !p.b.term.dead) fireSynapse(p.b.term);
+    return false;
+  });
+
+  // 树突内向脉冲
+  for(const p of inPulses){
+    p.d-=p.speed*dt;
+    const [x,y]=branchPoint(p.b,Math.max(0,p.d));
+    const ox=cam.x*PAR[p.n.layer], oy=cam.y*PAR[p.n.layer];
+    noStroke(); const c=p.inhib?CYAN:GOLD;
+    fill(c[0],c[1],c[2],150); circle(x+ox,y+oy,2.2);
+  }
+  inPulses=inPulses.filter(p=>{
+    if(p.d>0) return true;
+    addInput(p.n, (p.inhib?0:0.35)*(exciteBoost>0?1.8:1), p.inhib);
+    return false;
+  });
+
+  // 递质喷雾 + 受体点亮
+  noStroke();
+  for(const s of sprays){ s.x+=s.vx*dt*3; s.y+=s.vy*dt*3; s.vx*=0.92; s.vy*=0.92; s.life-=dt*1.4;
+    fill(255,235,190, Math.max(0,s.life)*150); circle(s.x+cam.x*0.9,s.y+cam.y*0.9,1.8); }
+  sprays=sprays.filter(s=>s.life>0);
+  for(const s of syns){ const k=el-(s.recT??-99);
+    if(k>=0 && k<0.5){ const al=(1-k/0.5)*200;
+      for(let i=0;i<5;i++){ const a=i/5*TWO_PI;
+        fill(255,244,220,al);
+        circle(s.tp[0]+Math.cos(a)*4+cam.x*PAR[s.to.layer],
+               s.tp[1]+Math.sin(a)*4+cam.y*PAR[s.to.layer],1.6); } } }
+
+  // 小胶质细胞
+  for(const mg of microglia){
+    push(); translate(mg.x+cam.x*0.9,mg.y+cam.y*0.9); rotate(Math.sin(el*0.3)*0.2);
+    stroke(200,190,150,80); strokeWeight(0.8); noFill();
+    const drawMg=(b)=>{ beginShape(); for(const p of b.pts) vertex(p[0],p[1]); endShape();
+      for(const c of b.children) drawMg(c); };
+    for(const b of mg.branches) drawMg(b);
+    noStroke(); fill(220,205,160,110); circle(0,0,5); pop();
+  }
+
+  // 轴突货运小火车
+  if(cargoAxon){ noStroke();
+    for(let i=0;i<3;i++){
+      cargoT[i]+=cargoDir[i]*dt*0.05;
+      if(cargoT[i]>1||cargoT[i]<0) cargoDir[i]*=-1;
+      const [x,y]=branchPoint(cargoAxon, cargoT[i]*cargoAxon.L);
+      fill(200,220,255,130); circle(x+cam.x*PAR[1],y+cam.y*PAR[1],2.4); } }
+
+  // 多巴胺雾
+  if(mist>0.005){ const ctx=drawingContext;
+    const g=ctx.createRadialGradient(width/2,height/2,0,width/2,height/2,width*0.6);
+    g.addColorStop(0,`rgba(255,190,110,${mist*0.5})`);
+    g.addColorStop(1,'rgba(255,190,110,0)');
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=g; ctx.fillRect(0,0,width,height); ctx.restore(); }
+}
+
+function drawGlow(x,y,core,glow,alpha,rgb){
+  const ctx=drawingContext, c=rgb||GOLD;
+  const g=ctx.createRadialGradient(x,y,0,x,y,glow);
+  g.addColorStop(0,`rgba(${c[0]},${c[1]},${c[2]},${0.8*alpha/255})`);
+  g.addColorStop(1,`rgba(${c[0]},${c[1]},${c[2]},0)`);
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,glow,0,Math.PI*2); ctx.fill(); ctx.restore();
+  noStroke(); fill(c[0],c[1],c[2],alpha); circle(x,y,core);
+}
+</script>
+</body>
+</html>

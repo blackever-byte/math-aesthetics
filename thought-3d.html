@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>思维之美 3D · the beauty of thought</title>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<style>
+  html, body { margin:0; padding:0; background:#000; overflow:hidden; height:100%; }
+  canvas { display:block; }
+  .serif { font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; font-weight:300; }
+
+  #vignette { position:fixed; inset:0; pointer-events:none; z-index:4;
+    background:radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,0.55) 100%); }
+  #grain { position:fixed; inset:-120px; pointer-events:none; z-index:6; opacity:0.04;
+    animation:gr 0.6s steps(2) infinite; }
+  @keyframes gr { 0%{transform:translate(0,0)} 25%{transform:translate(-34px,22px)}
+    50%{transform:translate(24px,-28px)} 75%{transform:translate(-18px,-12px)} 100%{transform:translate(0,0)} }
+
+  #title { position:fixed; left:0; right:0; bottom:4.5vh; text-align:center; z-index:7;
+    pointer-events:none; color:rgba(212,175,105,0.55);
+    font-size:clamp(12px,1.3vw,16px); letter-spacing:0.9em; text-indent:0.9em; }
+  #title small { display:block; margin-top:1.2em; font-size:0.62em; letter-spacing:0.4em;
+    color:rgba(212,175,105,0.28); font-family:Georgia,serif; font-style:italic; }
+  #hint { position:fixed; right:2.2vw; bottom:4.5vh; z-index:7; pointer-events:none;
+    color:rgba(200,170,120,0.3); font-size:11px; letter-spacing:0.25em; text-align:right;
+    line-height:2.1; }
+
+  #gate { position:fixed; inset:0; display:flex; flex-direction:column; z-index:20;
+    align-items:center; justify-content:center; cursor:pointer; background:#000;
+    transition:opacity 2s ease; }
+  #gate.hide { opacity:0; pointer-events:none; }
+  #gate .big { color:rgba(232,200,140,0.9); font-size:clamp(20px,2.6vw,30px);
+    letter-spacing:0.7em; text-indent:0.7em; animation:breathe 4s ease-in-out infinite; }
+  #gate .sub { margin-top:3em; color:rgba(200,170,120,0.35); font-size:12px;
+    letter-spacing:0.45em; line-height:2.4; text-align:center; }
+  @keyframes breathe { 0%,100%{opacity:0.5} 50%{opacity:1} }
+</style>
+</head>
+<body>
+
+<div id="gate" class="serif">
+  <div class="big">思 维 之 美 · 3D</div>
+  <div class="sub">一座可以走进去的大脑<br>点 击 进 入</div>
+</div>
+<div id="title" class="serif">思维之美<small>the beauty of thought · volumetric</small></div>
+<div id="hint">拖动 = 旋转 · 滚轮 = 缩放 · 右键拖 = 平移<br>点击神经元 = 注入想法 · R = 重置</div>
+<div id="vignette"></div><div id="grain"></div>
+
+<script>
+/* ================================================================
+ * 思维之美 3D —— 可漫游的三维神经网络
+ * Three.js + OrbitControls。生成/电生理/可塑性逻辑与 2D 版同源，
+ * 全部升维：分支在三维空间递归生长，脉冲沿三维折线跳跃传导。
+ * ================================================================ */
+
+const GOLD=new THREE.Color(0.83,0.69,0.42);
+const CYAN=new THREE.Color(0.47,0.78,1.0);
+const WHITE=new THREE.Color(1.0,0.96,0.86);
+const V=()=>new THREE.Vector3();
+
+let scene, camera, renderer, controls, clock;
+let t0=null, paused=true;
+const now=()=>clock? clock.elapsedTime : 0;
+
+// ---------- 网络数据（与 2D 版同构，坐标升维） ----------
+let neurons=[], syns=[], pulses=[], inPulses=[], sprays=[], microglia=[];
+let staticGroup, termPts, myelinGeo;
+let netDirty=true, netRedrawT=0;
+let exciteBoost=0, mist=0, mistTarget=0;
+let engram=[], engramT=-99;
+let cargoAxon=null, cargoT=[0.2,0.5,0.8], cargoDir=[1,1,-1];
+let nextWave=8, nextAval=16, nextMist=24, nextEngram=40, nextSprout=14;
+let chasePulse=null, chaseEnd=0, idleTimer=0;
+let dotTex, glowTex, ringTex;
+let pulseSprites=[], sprayPts, cargoSprites=[], mgGroups=[], ringMeshes=[];
+let mistSprite;
+
+const rand=(a,b)=>a+Math.random()*(b-a);
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+
+// 三维递归分支
+function growBranch(pos,dir,len,depth,isAxon,spread){
+  const pts=[pos.clone()]; const d=dir.clone(); const p=pos.clone();
+  const steps=3+(Math.random()*3|0);
+  for(let i=0;i<steps;i++){
+    d.x+=(Math.random()-0.5)*spread; d.y+=(Math.random()-0.5)*spread;
+    d.z+=(Math.random()-0.5)*spread; d.normalize();
+    p.addScaledVector(d, len/steps); pts.push(p.clone());
+  }
+  const b={pts,L:polyLen(pts),w:0.6+depth*0.55,children:[],isAxon,
+    myelin:[],boutons:[],term:null};
+  if(depth>0){
+    const nC = isAxon? (Math.random()<0.25?2:1) : 2;
+    for(let i=0;i<nC;i++){
+      const nd=d.clone();
+      nd.x+=(Math.random()-0.5)*1.1; nd.y+=(Math.random()-0.5)*1.1;
+      nd.z+=(Math.random()-0.5)*1.1; nd.normalize();
+      const child=growBranch(p,nd,len*0.72,depth-1,isAxon,spread);
+      b.children.push(child);
+    }
+  }
+  return b;
+}
+function polyLen(p){ let L=0;
+  for(let i=0;i<p.length-1;i++) L+=p[i].distanceTo(p[i+1]); return L; }
+function branchPoint(b,d,out){
+  const p=b.pts; let acc=0;
+  for(let i=0;i<p.length-1;i++){
+    const l=p[i].distanceTo(p[i+1]);
+    if(acc+l>=d && l>0){ const k=(d-acc)/l;
+      return out.copy(p[i]).lerp(p[i+1],k); }
+    acc+=l; }
+  return out.copy(p[p.length-1]);
+}
+function growAxon(n,target){
+  const dir=V().subVectors(target.pos,n.pos).normalize();
+  dir.x+=(Math.random()-0.5)*0.8; dir.y+=(Math.random()-0.5)*0.8; dir.normalize();
+  const p=n.pos.clone(); const pts=[p.clone()];
+  while(p.distanceTo(target.pos)>50 && pts.length<50){
+    const want=V().subVectors(target.pos,p).normalize();
+    dir.lerp(want,0.16);
+    dir.x+=(Math.random()-0.5)*0.3; dir.y+=(Math.random()-0.5)*0.3;
+    dir.z+=(Math.random()-0.5)*0.3; dir.normalize();
+    p.addScaledVector(dir,20); pts.push(p.clone());
+  }
+  const b={pts,L:polyLen(pts),w:1.4,children:[],isAxon:true,myelin:[],boutons:[],term:null};
+  for(let d=b.L*0.15;d<b.L*0.85;d+=88) b.myelin.push([d,Math.min(d+68,b.L*0.9)]);
+  for(let d=b.L*0.6;d<b.L-10;d+=42) b.boutons.push(d);
+  return b;
+}
+function inMyelin(b,d){ for(const m of b.myelin) if(d>=m[0]&&d<=m[1]) return true; return false; }
+
+function buildNetwork(){
+  neurons=[]; syns=[]; pulses=[]; inPulses=[]; sprays=[]; microglia=[];
+  for(const s of pulseSprites) scene.remove(s.sp);
+  pulseSprites=[];
+  const cols=8, rows=5;
+  let idx=0;
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    const pos=new THREE.Vector3(
+      (c+0.5)/cols*900-450 + rand(-40,40),
+      (r+0.5)/rows*560-280 + rand(-35,35),
+      rand(-260,260));
+    const type = idx===17 ? 'purk' : (Math.random()<0.3?'star':'pyr');
+    const n={pos, type, inhib:Math.random()<0.2,
+      r: type==='purk'?17: rand(7,14),
+      pot:0, ref:0, flash:0, dend:[], axon:null, dendFlash:0, sprite:null};
+    if(type==='purk'){
+      for(let k=0;k<7;k++){
+        const a=(k/6-0.5)*1.9;
+        const dir=new THREE.Vector3(Math.sin(a),1,rand(-0.3,0.3)).normalize();
+        n.dend.push(growBranch(pos.clone().add(new THREE.Vector3(0,10,0)),
+          dir, rand(55,80), 3, false, 0.32));
+      }
+    } else {
+      const nd=3+(Math.random()*3|0);
+      for(let k=0;k<nd;k++)
+        n.dend.push(growBranch(pos, new THREE.Vector3(rand(-1,1),rand(-1,1),rand(-1,1)).normalize(),
+          rand(30,46), 3, false, 0.5));
+    }
+    neurons.push(n); idx++;
+  }
+  for(const n of neurons){
+    let target, tries=0;
+    do { target=neurons[(Math.random()*neurons.length)|0]; tries++; }
+    while((target===n || n.pos.distanceTo(target.pos)<130) && tries<20);
+    n.axon=growAxon(n,target);
+    const db=target.dend[(Math.random()*target.dend.length)|0];
+    const tp=branchPoint(db, db.L*(0.4+Math.random()*0.4), V()).clone();
+    const syn={from:n, to:n.target=target, axon:n.axon, dendBr:db, tp,
+      strength:0.5+Math.random()*0.3, lastUse:-99, recT:-99, dead:0};
+    n.axon.term=syn; syns.push(syn);
+  }
+  // 胞体精灵（亮边暗核 → 中空细胞质感）
+  for(const n of neurons){
+    const m=new THREE.SpriteMaterial({map:glowTex, color: n.inhib?0x9fd0ff:0xd8b06a,
+      transparent:true, opacity:0.25, blending:THREE.AdditiveBlending, depthWrite:false});
+    const sp=new THREE.Sprite(m); sp.position.copy(n.pos);
+    sp.scale.setScalar(n.r*3.4); scene.add(sp); n.sprite=sp;
+  }
+  // 小胶质细胞
+  for(let i=0;i<3;i++){
+    const g=new THREE.Group(); const pos=[];
+    for(let k=0;k<5;k++){
+      const b=growBranch(new THREE.Vector3(0,0,0),
+        new THREE.Vector3(rand(-1,1),rand(-1,1),rand(-1,1)).normalize(), rand(12,18), 2, false, 0.6);
+      collectSegs(b,pos,1);
+    }
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+    g.add(new THREE.LineSegments(geo,
+      new THREE.LineBasicMaterial({color:0xc8be96, transparent:true, opacity:0.5})));
+    g.position.set(rand(-400,400),rand(-250,250),rand(-200,200));
+    scene.add(g);
+    microglia.push({g, dir:new THREE.Vector3(1,0,0), target:null});
+  }
+  // 记忆印迹环
+  for(let i=0;i<6;i++) engram.push(neurons[(Math.random()*neurons.length)|0]);
+  for(const n of engram){
+    const m=new THREE.Sprite(new THREE.SpriteMaterial({map:ringTex, color:0xffdc96,
+      transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false}));
+    m.position.copy(n.pos); m.scale.setScalar(n.r*6); scene.add(m); n.engRing=m;
+  }
+  // 货运小火车
+  cargoAxon=neurons.reduce((a,b)=>a.axon.L>b.axon.L?a:b).axon;
+  for(let i=0;i<3;i++){
+    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:dotTex, color:0xc8e0ff,
+      transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false}));
+    sp.scale.setScalar(4); scene.add(sp); cargoSprites.push(sp);
+  }
+  // 喷雾粒子池
+  const sg=new THREE.BufferGeometry();
+  sg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(600*3),3));
+  sprayPts=new THREE.Points(sg, new THREE.PointsMaterial({size:2.2, map:dotTex,
+    color:0xffeebe, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false}));
+  sprayPts.frustumCulled=false; scene.add(sprayPts);
+  // 多巴胺雾
+  mistSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex, color:0xffbe6e,
+    transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false}));
+  mistSprite.scale.setScalar(2600); scene.add(mistSprite);
+  netDirty=true;
+}
+
+// 收集分支线段到数组
+function collectSegs(b, arr, bright){
+  for(let i=0;i<b.pts.length-1;i++){
+    arr.push(b.pts[i].x,b.pts[i].y,b.pts[i].z, b.pts[i+1].x,b.pts[i+1].y,b.pts[i+1].z);
+  }
+  for(const c of b.children) collectSegs(c,arr,bright);
+}
+
+// 重建静态网络几何（树突/轴突/棘/髓鞘/终扣/突触末梢）
+function rebuildStatic(){
+  if(staticGroup){ scene.remove(staticGroup);
+    staticGroup.traverse(o=>{ if(o.geometry) o.geometry.dispose(); }); }
+  staticGroup=new THREE.Group();
+  const segPos=[], segCol=[], myePos=[], boutPos=[], termPos=[], termCol=[];
+  const gc=GOLD;
+  for(const n of neurons){
+    const collect=(b)=>{
+      const base= b.isAxon? 0.5 : 0.28+b.w*0.14;
+      for(let i=0;i<b.pts.length-1;i++){
+        segPos.push(b.pts[i].x,b.pts[i].y,b.pts[i].z, b.pts[i+1].x,b.pts[i+1].y,b.pts[i+1].z);
+        segCol.push(gc.r*base,gc.g*base,gc.b*base, gc.r*base,gc.g*base,gc.b*base);
+      }
+      if(!b.isAxon){                       // 树突棘
+        const tmp=V(), tmp2=V();
+        for(let d=6;d<b.L-4;d+=8){
+          branchPoint(b,d,tmp); branchPoint(b,d+2,tmp2);
+          const nrm=V().subVectors(tmp2,tmp);
+          const perp=new THREE.Vector3(-nrm.y,nrm.x,0).normalize().multiplyScalar(3);
+          segPos.push(tmp.x,tmp.y,tmp.z, tmp.x+perp.x,tmp.y+perp.y,tmp.z+perp.z);
+          segCol.push(gc.r*0.22,gc.g*0.22,gc.b*0.22, gc.r*0.22,gc.g*0.22,gc.b*0.22);
+        }
+      } else {                             // 髓鞘 + 终扣
+        const tmp=V();
+        for(const m of b.myelin)
+          for(let d=m[0];d<m[1]-4;d+=7){
+            const a=branchPoint(b,d,tmp).clone(), bb=branchPoint(b,d+6,V()).clone();
+            myePos.push(a.x,a.y,a.z, bb.x,bb.y,bb.z);
+          }
+        for(const d of b.boutons){ branchPoint(b,d,tmp); boutPos.push(tmp.x,tmp.y,tmp.z); }
+        if(b.term && !b.term.dead){
+          const end=b.pts[b.pts.length-1];
+          termPos.push(end.x,end.y,end.z);
+          const s=b.term.strength;
+          termCol.push(0.6+s*0.4, 0.5+s*0.35, 0.3+s*0.2);
+        }
+      }
+      for(const c of b.children) collect(c);
+    };
+    for(const db of n.dend) collect(db);
+    collect(n.axon);
+  }
+  const mk=(pos,col)=>{
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+    if(col) g.setAttribute('color', new THREE.Float32BufferAttribute(col,3));
+    return g; };
+  staticGroup.add(new THREE.LineSegments(mk(segPos,segCol),
+    new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:0.85,
+      blending:THREE.AdditiveBlending, depthWrite:false})));
+  staticGroup.add(new THREE.LineSegments(mk(myePos,null),
+    new THREE.LineBasicMaterial({color:0xf0d9a0, transparent:true, opacity:0.75,
+      blending:THREE.AdditiveBlending, depthWrite:false})));
+  const bp=new THREE.Points(mk(boutPos,null), new THREE.PointsMaterial({size:2.6,
+    map:dotTex, color:0xd8c088, transparent:true, blending:THREE.AdditiveBlending,
+    depthWrite:false}));
+  bp.frustumCulled=false; staticGroup.add(bp);
+  termPts=new THREE.Points(mk(termPos,termCol), new THREE.PointsMaterial({size:7,
+    map:dotTex, vertexColors:true, transparent:true, blending:THREE.AdditiveBlending,
+    depthWrite:false}));
+  termPts.frustumCulled=false; staticGroup.add(termPts);
+  scene.add(staticGroup);
+}
+
+// ---------- 电生理 ----------
+function fireNeuron(n){
+  n.flash=1; n.pot=0; n.ref=1.1;
+  if(pulses.length<46){
+    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,
+      color: n.inhib?0x9fd0ff:0xfff4dc, transparent:true, opacity:0.95,
+      blending:THREE.AdditiveBlending, depthWrite:false}));
+    sp.scale.setScalar(14); scene.add(sp);
+    // 拖尾线
+    const tg=new THREE.BufferGeometry();
+    tg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(8*3),3));
+    const tl=new THREE.Line(tg, new THREE.LineBasicMaterial({
+      color: n.inhib?0x78c8ff:0xd4af69, transparent:true, opacity:0.7,
+      blending:THREE.AdditiveBlending, depthWrite:false}));
+    tl.frustumCulled=false; scene.add(tl);
+    const p={n, b:n.axon, d:0, inhib:n.inhib, sp, tl, trail:[]};
+    pulses.push(p); pulseSprites.push(p);
+  }
+}
+function fireSynapse(syn){
+  const el=now();
+  syn.strength=Math.min(1,syn.strength+0.12); syn.lastUse=el; syn.recT=el;
+  netDirty=true;
+  const end=syn.axon.pts[syn.axon.pts.length-1];
+  const dir=V().subVectors(syn.tp,end).normalize();
+  for(let k=0;k<10;k++){
+    const v=dir.clone();
+    v.x+=rand(-0.5,0.5); v.y+=rand(-0.5,0.5); v.z+=rand(-0.5,0.5);
+    v.normalize().multiplyScalar(rand(35,70));
+    sprays.push({pos:end.clone(), vel:v, life:1});
+  }
+  inPulses.push({n:syn.to, b:syn.dendBr, d:syn.dendBr.L*0.6, inhib:syn.from.inhib, speed:70});
+  if(tickBudget>0){ tickBudget--; tick(0.09+syn.strength*0.08); }
+}
+function addInput(n,amount,inhib){
+  if(n.ref>0) return;
+  n.pot = inhib? Math.max(0,n.pot-0.3) : n.pot+amount;
+  if(n.pot>=1) fireNeuron(n);
+}
+
+// ---------- 声音（与 2D 版相同） ----------
+let actx, master, droneGain, delaySend, tickBudget=0, nextHB=2;
+function initAudio(){
+  actx=new (window.AudioContext||window.webkitAudioContext)();
+  master=actx.createGain(); master.gain.value=0.8; master.connect(actx.destination);
+  const dly=actx.createDelay(1); dly.delayTime.value=0.31;
+  const fb=actx.createGain(); fb.gain.value=0.36;
+  const wet=actx.createGain(); wet.gain.value=0.18;
+  delaySend=actx.createGain(); delaySend.connect(dly); dly.connect(fb);
+  fb.connect(dly); dly.connect(wet); wet.connect(master);
+  droneGain=actx.createGain(); droneGain.gain.value=0.05;
+  const lp=actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=200;
+  for(const f of [49,73.42]){ const o=actx.createOscillator(); o.type='sine';
+    o.frequency.value=f; o.connect(droneGain); o.start(); }
+  droneGain.connect(lp); lp.connect(master);
+}
+const _nb={};
+function noiseBuf(sec){ if(_nb[sec])return _nb[sec];
+  const b=actx.createBuffer(1,actx.sampleRate*sec,actx.sampleRate),d=b.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1; return _nb[sec]=b; }
+function tick(v){ const t=actx.currentTime;
+  const s=actx.createBufferSource(); s.buffer=noiseBuf(0.05);
+  const f=actx.createBiquadFilter(); f.type='highpass'; f.frequency.value=3200;
+  const g=actx.createGain(); g.gain.setValueAtTime(v,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.045);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+0.05); }
+function pluck(f,v){ const t=actx.currentTime;
+  const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(v,t+0.02); g.gain.exponentialRampToValueAtTime(0.001,t+0.8);
+  o.connect(g); g.connect(master); g.connect(delaySend); o.start(t); o.stop(t+0.85); }
+function sweepUp(){ const t=actx.currentTime;
+  const s=actx.createBufferSource(); s.buffer=noiseBuf(1.2);
+  const f=actx.createBiquadFilter(); f.type='bandpass'; f.Q.value=1.5;
+  f.frequency.setValueAtTime(500,t); f.frequency.exponentialRampToValueAtTime(4000,t+1.1);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.14,t+1.1); g.gain.exponentialRampToValueAtTime(0.001,t+1.2);
+  s.connect(f).connect(g).connect(master); s.start(t); s.stop(t+1.3); }
+function downChord(){ for(const f of [392,329.63,261.63]) pluck(f,0.07); }
+function heartbeat(){ const t=actx.currentTime;
+  const o=actx.createOscillator(),g=actx.createGain();
+  o.frequency.setValueAtTime(95,t); o.frequency.exponentialRampToValueAtTime(42,t+0.1);
+  g.gain.setValueAtTime(0.22,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.22);
+  o.connect(g).connect(master); o.start(t); o.stop(t+0.25); }
+
+// ---------- 事件引擎 ----------
+function events(el,dt){
+  tickBudget=3;
+  exciteBoost=Math.max(0,exciteBoost-dt);
+  if(Math.random()<0.08) addInput(neurons[(Math.random()*neurons.length)|0],
+    0.12*(exciteBoost>0?3:1),false);
+  if(el>nextWave){ nextWave=el+6+Math.random()*4;
+    const x0=rand(-450,450);
+    for(const n of neurons) if(Math.abs(n.pos.x-x0)<180) addInput(n,0.55,false);
+    for(let k=0;k<3;k++) pluck(220*Math.pow(1.25,(Math.random()*5|0)),0.03); }
+  if(el>nextAval){ nextAval=el+16+Math.random()*9;
+    exciteBoost=2.2; sweepUp();
+    for(let k=0;k<5;k++) fireNeuron(neurons[(Math.random()*neurons.length)|0]);
+    if(pulses.length){ chasePulse=pulses[(Math.random()*pulses.length)|0];
+      chaseEnd=el+1.8; } }
+  if(el>nextMist){ nextMist=el+22+Math.random()*14; mistTarget=0.1;
+    setTimeout(()=>mistTarget=0,3200); downChord(); }
+  mist+=(mistTarget-mist)*0.02;
+  if(el>nextEngram){ nextEngram=el+38+Math.random()*16; engramT=el; }
+  if(el>nextSprout){ nextSprout=el+26+Math.random()*10;
+    const n=neurons[(Math.random()*neurons.length)|0];
+    n.dend.push(growBranch(n.pos,
+      new THREE.Vector3(rand(-1,1),rand(-1,1),rand(-1,1)).normalize(),16,1,false,0.5));
+    netDirty=true; }
+  for(const s of syns){ if(!s.dead && el-s.lastUse>16)
+    s.strength=Math.max(0,s.strength-dt*0.01); }
+  for(const mg of microglia){
+    if(!mg.target){
+      const weak=syns.find(s=>!s.dead && s.strength<0.2 && el-s.lastUse>20);
+      if(weak) mg.target=weak;
+      mg.dir.x+=rand(-0.06,0.06); mg.dir.y+=rand(-0.06,0.06); mg.dir.z+=rand(-0.06,0.06);
+      mg.dir.normalize();
+      mg.g.position.addScaledVector(mg.dir, 22*dt);
+      mg.g.position.x=clamp(mg.g.position.x,-480,480);
+      mg.g.position.y=clamp(mg.g.position.y,-300,300);
+      mg.g.position.z=clamp(mg.g.position.z,-300,300);
+    } else {
+      const s=mg.target;
+      if(s.dead){ mg.target=null; continue; }
+      const end=s.axon.pts[s.axon.pts.length-1];
+      const d=mg.g.position.distanceTo(end);
+      if(d<16){ s.dead=1; netDirty=true; mg.target=null; }
+      else { const dir=V().subVectors(end,mg.g.position).normalize();
+        mg.g.position.addScaledVector(dir, 40*dt); }
+    }
+    mg.g.rotation.y+=dt*0.1;
+  }
+  if(el>nextHB){ nextHB=el+0.85+Math.random()*0.3; heartbeat(); }
+}
+
+// ---------- 主循环 ----------
+const tmpV=V(), tmpV2=V();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(0.05, clock.getDelta()), el=clock.elapsedTime;
+  if(paused){ renderer.render(scene,camera); return; }
+  events(el,dt);
+  controls.update();
+  // 空闲自动旋转
+  idleTimer+=dt;
+  controls.autoRotate = idleTimer>8 && !chasePulse;
+  controls.autoRotateSpeed = 0.4;
+
+  if(netDirty && el>netRedrawT){ rebuildStatic(); netDirty=false; netRedrawT=el+0.4; }
+
+  // 胞体：电位闪烁 + 发放闪光
+  for(const n of neurons){
+    n.flash*=0.9; n.ref=Math.max(0,n.ref-dt);
+    const flick=n.pot*(0.5+0.5*Math.sin(el*22+n.pos.x));
+    n.sprite.material.opacity=0.2+flick*0.25+n.flash*0.55;
+    n.sprite.scale.setScalar(n.r*(3.4+n.flash*2));
+  }
+  // 记忆印迹
+  const ek=el-engramT;
+  for(const n of engram) if(n.engRing)
+    n.engRing.material.opacity = (ek>=0&&ek<1.6)? (1-ek/1.6)*0.7 : 0;
+
+  // 轴突脉冲
+  for(const p of pulses){
+    p.d += 175*dt*(inMyelin(p.b,p.d)?4:1)*(exciteBoost>0?1.3:1);
+    branchPoint(p.b,p.d,tmpV);
+    p.trail.push(tmpV.x,tmpV.y,tmpV.z);
+    if(p.trail.length>24) p.trail.splice(0,3);
+    const arr=p.tl.geometry.attributes.position.array;
+    const n3=Math.min(8,p.trail.length/3);
+    for(let i=0;i<8;i++){
+      const si=Math.max(0,(p.trail.length/3-1-(7-i)))*3;
+      arr[i*3]=p.trail[si]||tmpV.x; arr[i*3+1]=p.trail[si+1]||tmpV.y; arr[i*3+2]=p.trail[si+2]||tmpV.z;
+    }
+    p.tl.geometry.attributes.position.needsUpdate=true;
+    p.sp.position.copy(tmpV);
+  }
+  pulses=pulses.filter(p=>{
+    if(p.d<p.b.L) return true;
+    if(p.b.term && !p.b.term.dead) fireSynapse(p.b.term);
+    scene.remove(p.sp); scene.remove(p.tl);
+    p.sp.material.dispose(); p.tl.geometry.dispose();
+    return false;
+  });
+  // 镜头骑乘：雪崩时注视一个脉冲
+  if(chasePulse && el<chaseEnd && pulses.includes(chasePulse))
+    controls.target.lerp(chasePulse.sp.position, 0.06);
+  else chasePulse=null;
+
+  // 树突内向脉冲
+  for(const p of inPulses){ p.d-=p.speed*dt; }
+  inPulses=inPulses.filter(p=>{
+    if(p.d>0) return true;
+    addInput(p.n,(p.inhib?0:0.35)*(exciteBoost>0?1.8:1),p.inhib);
+    return false;
+  });
+
+  // 递质喷雾
+  const sarr=sprayPts.geometry.attributes.position.array;
+  let si=0;
+  for(const s of sprays){
+    s.pos.addScaledVector(s.vel,dt*2.2); s.vel.multiplyScalar(0.94); s.life-=dt*1.4;
+    if(s.life>0 && si<600){ sarr[si*3]=s.pos.x; sarr[si*3+1]=s.pos.y; sarr[si*3+2]=s.pos.z; si++; }
+  }
+  for(let i=si;i<600;i++){ sarr[i*3]=0; sarr[i*3+1]=9999; sarr[i*3+2]=0; }
+  sprayPts.geometry.attributes.position.needsUpdate=true;
+  sprays=sprays.filter(s=>s.life>0);
+
+  // 货运小火车
+  for(let i=0;i<3;i++){
+    cargoT[i]+=cargoDir[i]*dt*0.04;
+    if(cargoT[i]>1||cargoT[i]<0) cargoDir[i]*=-1;
+    branchPoint(cargoAxon, cargoT[i]*cargoAxon.L, tmpV2);
+    cargoSprites[i].position.copy(tmpV2);
+  }
+  mistSprite.material.opacity=mist*0.6;
+  renderer.render(scene,camera);
+}
+
+// ---------- 纹理 ----------
+function makeTextures(){
+  const c=document.createElement('canvas'); c.width=c.height=64;
+  const x=c.getContext('2d');
+  let g=x.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.4,'rgba(255,255,255,0.4)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  x.fillStyle=g; x.fillRect(0,0,64,64);
+  glowTex=new THREE.CanvasTexture(c);
+  const c2=document.createElement('canvas'); c2.width=c2.height=32;
+  const x2=c2.getContext('2d');
+  g=x2.createRadialGradient(16,16,0,16,16,16);
+  g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.6,'rgba(255,255,255,0.6)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  x2.fillStyle=g; x2.fillRect(0,0,32,32);
+  dotTex=new THREE.CanvasTexture(c2);
+  const c3=document.createElement('canvas'); c3.width=c3.height=64;
+  const x3=c3.getContext('2d');
+  x3.strokeStyle='rgba(255,255,255,1)'; x3.lineWidth=3;
+  x3.beginPath(); x3.arc(32,32,26,0,Math.PI*2); x3.stroke();
+  ringTex=new THREE.CanvasTexture(c3);
+}
+function makeGrain(){
+  const c=document.createElement('canvas'); c.width=c.height=220;
+  const x=c.getContext('2d'), img=x.createImageData(220,220);
+  for(let i=0;i<img.data.length;i+=4){ const v=(Math.random()*255)|0;
+    img.data[i]=img.data[i+1]=img.data[i+2]=v; img.data[i+3]=255; }
+  x.putImageData(img,0,0);
+  document.getElementById('grain').style.background=`url(${c.toDataURL()})`;
+}
+
+// ---------- 启动 ----------
+function init(){
+  scene=new THREE.Scene();
+  scene.fog=new THREE.FogExp2(0x000000, 0.00085);
+  camera=new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 5000);
+  camera.position.set(120, 100, 780);
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(innerWidth,innerHeight);
+  renderer.setPixelRatio(Math.min(2,devicePixelRatio));
+  document.body.appendChild(renderer.domElement);
+  controls=new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping=true; controls.dampingFactor=0.06;
+  controls.minDistance=80; controls.maxDistance=1800;
+  controls.addEventListener('start',()=>{ idleTimer=0; });
+  clock=new THREE.Clock(false);
+  makeTextures(); makeGrain(); buildNetwork(); animate();
+
+  document.getElementById('gate').addEventListener('click',function(){
+    initAudio(); this.classList.add('hide'); paused=false; clock.start();
+  },{once:true});
+
+  // 点击（非拖动）= 注入想法
+  let downPos=null;
+  renderer.domElement.addEventListener('pointerdown',e=>downPos=[e.clientX,e.clientY]);
+  renderer.domElement.addEventListener('pointerup',e=>{
+    if(paused||!downPos) return;
+    if(Math.hypot(e.clientX-downPos[0],e.clientY-downPos[1])>6){ downPos=null; return; }
+    downPos=null;
+    const ray=new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(e.clientX/innerWidth*2-1,
+      -(e.clientY/innerHeight)*2+1), camera);
+    let best=null,bd=1e9;
+    for(const n of neurons){ const d=ray.ray.distanceToPoint(n.pos);
+      if(d<bd){bd=d;best=n;} }
+    if(best && bd<60){ fireNeuron(best);
+      for(const n of neurons) if(n.pos.distanceTo(best.pos)<220) addInput(n,0.45,false);
+      exciteBoost=Math.max(exciteBoost,0.8); }
+  });
+  window.addEventListener('keydown',e=>{ if(e.key==='r'||e.key==='R') location.reload(); });
+  window.addEventListener('resize',()=>{
+    camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+  });
+}
+init();
+</script>
+</body>
+</html>
